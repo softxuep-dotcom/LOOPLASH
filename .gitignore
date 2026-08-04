@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.vite/
+coverage/
+playtest-artifacts/
+
+# Local tooling and logs
+.codex-*
+*.log
+*.tsbuildinfo
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
