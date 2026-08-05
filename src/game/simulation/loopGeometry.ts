@@ -19,6 +19,8 @@ export const MAX_RAW_PATH_POINTS = 256;
 export interface LoopGeometry {
   sampled: Vec2[];
   polygon: Vec2[];
+  chordStart: Vec2;
+  chordEnd: Vec2;
   captureTolerance: number;
 }
 
@@ -44,9 +46,18 @@ export function buildLoopGeometry(state: GameState): LoopGeometry {
     PATH_SAMPLE_DISTANCE,
     MAX_PATH_POINTS
   );
+  const remote = state.controlMode === 'pull-cast';
+  const chordStart = { ...(sampled.at(-1) ?? state.player.needle) };
+  const chordEnd = remote
+    ? { ...(sampled[0] ?? state.player.needle) }
+    : { ...state.player.anchor };
   return {
     sampled,
-    polygon: [...sampled, { ...state.player.anchor }],
+    // Remote casting judges exactly the stroke the player drew. Classic mode
+    // retains its anchor fan so the old feel remains a faithful A/B control.
+    polygon: remote ? sampled.map((point) => ({ ...point })) : [...sampled, { ...state.player.anchor }],
+    chordStart,
+    chordEnd,
     captureTolerance: 9 * needle.captureTolerance * modifiers.captureTolerance
   };
 }

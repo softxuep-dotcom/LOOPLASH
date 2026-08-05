@@ -293,21 +293,26 @@ export class EnemySystem {
 export function hurtPlayer(context: SimulationContext, amount: number, x: number, y: number): void {
   const { state } = context;
   const player = state.player;
-  if (state.phase !== 'playing' || player.invulnerable > 0) return;
+  if (state.phase !== 'playing' || player.invulnerable > 0 || player.pull) return;
+  const interruptDrawing = player.drawing && state.controlMode === 'pull-cast';
   if (player.shield > 0) {
     player.shield -= 1;
     player.invulnerable = 0.65;
     context.effect({ type: 'shield', x: player.anchor.x, y: player.anchor.y, radius: 44, color: 0x9fd8ff, life: 0.45 });
+    if (interruptDrawing) player.pendingWeakSnap = true;
     return;
   }
   player.hearts = Math.max(0, player.hearts - amount);
   player.invulnerable = 1.05;
   player.flow = Math.max(1, player.flow - 1.2);
   context.effect({ type: 'hit', x, y, radius: 58, color: 0xff5f7f, life: 0.5 });
+  if (interruptDrawing) player.pendingWeakSnap = true;
   if (player.hearts <= 0) {
     state.previousPhase = state.phase;
     state.phase = 'gameover';
     player.drawing = false;
     player.path = [];
+    player.landingTarget = null;
+    player.pull = null;
   }
 }

@@ -1,15 +1,16 @@
 /**
  * Headless playtest harness.
  *
- * Unlike simulation-smoke.ts (which force-sets objective.current to pass stages),
- * this drives the simulation only through InputFrame, the same channel a real
+ * Unlike simulation-smoke.ts (short CI invariants and scripted interactions),
+ * this runs longer strategies through InputFrame, the same channel a real
  * player uses. It answers the questions the design doc marks as highest risk:
  * capture credibility, big-loop dominance, and objective achievability.
  */
-import type { EnemyState, InputFrame, Vec2 } from '../src/game/core/types.ts';
+import type { ControlMode, EnemyState, InputFrame, Vec2 } from '../src/game/core/types.ts';
 import { GameSimulation } from '../src/game/simulation/GameSimulation.ts';
-import { pointInPolygon } from '../src/game/core/math.ts';
+import { pointInPolygon, polygonArea } from '../src/game/core/math.ts';
 import { buildLoopGeometry } from '../src/game/simulation/loopGeometry.ts';
+import { poleOfInaccessibility } from '../src/game/simulation/landingGeometry.ts';
 import { STAGES } from '../src/game/content/encounters.ts';
 
 const DT = 1 / 60;
@@ -68,6 +69,8 @@ interface LoopResult {
   capturedUids: number[];
   scoreGain: number;
   frames: number;
+  meanFingerError: number;
+  landingInside: boolean | null;
 }
 
 /**
@@ -90,17 +93,29 @@ function drawLoop(sim: GameSimulation, options: LoopOptions): LoopResult {
     return { x: origin.x + Math.cos(angle) * r, y: origin.y + Math.sin(angle) * r };
   };
 
-  sim.step(DT, { ...idle, deployPressed: true, deployHeld: true, pointer: pointerAt(0) });
+  const firstPointer = pointerAt(0);
+  sim.step(DT, { ...idle, deployPressed: true, deployHeld: true, pointer: firstPointer });
+  let fingerError = Math.hypot(state.player.needle.x - firstPointer.x, state.player.needle.y - firstPointer.y);
+  let fingerSamples = 1;
   let used = 1;
   for (let i = 1; i < frames; i += 1) {
     if (!state.player.drawing) break; // over-tension forced a snap
-    sim.step(DT, { ...idle, deployHeld: true, pointer: pointerAt(i / (frames - 1)) });
+    const pointer = pointerAt(i / (frames - 1));
+    sim.step(DT, { ...idle, deployHeld: true, pointer });
+    fingerError += Math.hypot(state.player.needle.x - pointer.x, state.player.needle.y - pointer.y);
+    fingerSamples += 1;
     used += 1;
   }
 
   // Snapshot the judged geometry and the live enemies immediately before release.
   // Uses the game's own builder so the polygon is exactly what it will judge.
   const polygon = buildLoopGeometry(state).polygon;
+  const landing = state.controlMode === 'pull-cast' && polygon.length >= 4 && polygonArea(polygon) >= 1200
+    ? poleOfInaccessibility(polygon, 1.5)
+    : null;
+  const landingInside = state.controlMode === 'pull-cast' && landing
+    ? Boolean(landing && pointInPolygon(landing, polygon))
+    : null;
   const before: LoopResult['enemiesAtRelease'] = state.enemies
     .filter((e: EnemyState) => !e.dead)
     .map((e: EnemyState) => ({ uid: e.uid, x: e.x, y: e.y, radius: e.radius, type: e.type }));
@@ -117,8 +132,65 @@ function drawLoop(sim: GameSimulation, options: LoopOptions): LoopResult {
     enemiesAtRelease: before,
     capturedUids,
     scoreGain: state.player.score - scoreBefore,
-    frames: used
+    frames: used,
+    meanFingerError: fingerError / fingerSamples,
+    landingInside
   };
+}
+
+// ---------------------------------------------------------------------------
+// Test G — how much of a capture comes from the drawn stroke, and how much from
+// the fan that closing back to the anchor adds?
+//
+// Test B proved there are no false NEGATIVES. This asks the opposite question:
+// does the anchor-tethered polygon capture things the player never drew around?
+// Those are the captures that read as "why did that count?".
+// ---------------------------------------------------------------------------
+function testPhantomCaptures(): void {
+  console.info('\n=== G. Captures from the anchor fan vs the drawn stroke ===');
+  for (const sweepTurns of [0.55, 0.8, 1.0]) {
+    let captured = 0;
+    let phantom = 0;
+    let areaGame = 0;
+    let areaStroke = 0;
+    let loops = 0;
+    const rng = makeRng(4242);
+
+    for (let trial = 0; trial < 260; trial += 1) {
+      const sim = new GameSimulation(1280, 720, 61000 + trial);
+      step(sim, 90);
+      if (sim.context.state.enemies.filter((e: EnemyState) => !e.dead).length === 0) continue;
+
+      const result = drawLoop(sim, {
+        radius: 110 + rng() * 130,
+        heading: rng() * Math.PI * 2,
+        sweep: Math.PI * 2 * sweepTurns,
+        frames: 34,
+        jitter: 8,
+        rng
+      });
+      loops += 1;
+      // The judged polygon is [...stroke, anchor]; dropping the last vertex and
+      // closing the stroke on itself gives the shape the player actually drew.
+      const stroke = result.polygon.slice(0, -1);
+      if (stroke.length < 4) continue;
+      areaGame += polygonArea(result.polygon);
+      areaStroke += polygonArea(stroke);
+
+      const capturedSet = new Set(result.capturedUids);
+      for (const enemy of result.enemiesAtRelease) {
+        if (!capturedSet.has(enemy.uid)) continue;
+        captured += 1;
+        if (!pointInPolygon({ x: enemy.x, y: enemy.y }, stroke, enemy.radius)) phantom += 1;
+      }
+    }
+    const pct = captured > 0 ? (phantom / captured) * 100 : 0;
+    console.info(
+      `  stroke ${(sweepTurns * 360).toFixed(0)}° | loops ${loops} | captured ${captured}`
+      + ` | outside the drawn stroke ${phantom} (${pct.toFixed(1)}%)`
+      + ` | judged area is ${(areaGame / Math.max(1, areaStroke)).toFixed(2)}x the drawn area`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -221,9 +293,11 @@ function playRun(
   radiusOf: (rng: () => number) => number,
   sweep: number,
   frames: number,
-  diagnostics?: { deaths: Map<string, number> }
+  diagnostics?: { deaths: Map<string, number> },
+  mode: ControlMode = 'pull-cast'
 ): RunResult {
   const sim = new GameSimulation(1280, 720, seed);
+  sim.setControlMode(mode);
   const rng = makeRng(seed ^ 0x5f3a);
   let loops = 0;
   let elapsedFrames = 0;
@@ -424,7 +498,7 @@ function testStageBudget(stageIndex = 0, trials = 500): void {
     s.eliteSpawned = false;
     s.enemies = stageIndex === 0 ? s.enemies : [];
     s.motes = [];
-    s.tutorialStep = 2;
+    s.tutorialStep = 4;
     s.phase = 'playing';
     const counted = new Set<number>();
     const countedMotes = new Set<number>();
@@ -470,6 +544,72 @@ function testStageBudget(stageIndex = 0, trials = 500): void {
   console.info(`  seeds taking over 90s: ${zeroMargin}/${trials} (${(zeroMargin / trials * 100).toFixed(1)}%)`);
 }
 
+// ---------------------------------------------------------------------------
+// Test H — direct A/B for the retained classic branch and remote pull-cast.
+// These are the product decision metrics, kept in one compact table so a
+// tuning change cannot improve one axis while quietly regressing another.
+// ---------------------------------------------------------------------------
+function testControlModeComparison(): void {
+  console.info('\n=== H. Control mode A/B ===');
+  const modes: ControlMode[] = ['drag-anchor', 'pull-cast'];
+  for (const mode of modes) {
+    const rng = makeRng(mode === 'pull-cast' ? 7701 : 7702);
+    let strictInside = 0;
+    let falseNegatives = 0;
+    let fingerError = 0;
+    let fingerLoops = 0;
+    let landingSamples = 0;
+    let landingInside = 0;
+
+    for (let trial = 0; trial < 120; trial += 1) {
+      const sim = new GameSimulation(1280, 720, 72000 + trial);
+      sim.setControlMode(mode);
+      step(sim, 90);
+      const result = drawLoop(sim, {
+        radius: 105 + rng() * 125,
+        heading: rng() * Math.PI * 2,
+        sweep: Math.PI * (1.25 + rng() * 0.65),
+        frames: 34,
+        jitter: 10,
+        rng
+      });
+      fingerError += result.meanFingerError;
+      fingerLoops += 1;
+      if (result.landingInside !== null) {
+        landingSamples += 1;
+        if (result.landingInside) landingInside += 1;
+      }
+      const captured = new Set(result.capturedUids);
+      for (const enemy of result.enemiesAtRelease) {
+        if (enemy.type === 'bomb-bloom' || !pointInPolygon(enemy, result.polygon, 0)) continue;
+        strictInside += 1;
+        if (!captured.has(enemy.uid)) falseNegatives += 1;
+      }
+    }
+
+    const seeds = Array.from({ length: 8 }, (_, index) => 88000 + index * 17);
+    const maxRuns = seeds.map((seed) => playRun(seed, () => 275, Math.PI * 1.9, 40, undefined, mode));
+    const tightRuns = seeds.map((seed) => playRun(seed, (random) => 70 + random() * 40, Math.PI * 1.4, 22, undefined, mode));
+    const average = (runs: RunResult[]) => runs.reduce((sum, run) => sum + run.score, 0) / runs.length;
+    const balance = average(maxRuns) / Math.max(1, average(tightRuns));
+    const diagnostics = { deaths: new Map<string, number>() };
+    for (const seed of seeds) playRun(seed + 400, (random) => 120 + random() * 110, Math.PI * 1.6, 32, diagnostics, mode);
+    const damageTotal = [...diagnostics.deaths.values()].reduce((sum, count) => sum + count, 0);
+    const damage = [...diagnostics.deaths.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([cause, count]) => `${cause} ${(count / Math.max(1, damageTotal) * 100).toFixed(0)}%`)
+      .join(', ');
+    const misses = strictInside > 0 ? falseNegatives / strictInside * 100 : 0;
+    const landing = landingSamples > 0 ? `${(landingInside / landingSamples * 100).toFixed(1)}%` : 'n/a';
+    console.info(
+      `  ${mode.padEnd(11)} | finger error ${(fingerError / fingerLoops).toFixed(1).padStart(5)}px`
+      + ` | capture misses ${misses.toFixed(1)}% | landing inside ${landing}`
+      + ` | max/tight score ${balance.toFixed(2)}x | damage ${damage || 'none'}`
+    );
+  }
+}
+
+testPhantomCaptures();
 testZeroSizeInit();
 testStageBudget(0, 400);
 testStageBudget(1, 400);
@@ -479,4 +619,5 @@ testCaptureCredibility();
 testLoopStrategies();
 testObjectiveReachability();
 testFirstLoopTime();
+testControlModeComparison();
 console.info('\nHarness complete.');

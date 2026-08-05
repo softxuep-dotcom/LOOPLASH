@@ -32,6 +32,7 @@ export class HudController {
     this.snapshot = snapshot;
     document.body.classList.toggle('reduced-motion', snapshot.reducedMotion);
     document.body.classList.toggle('high-contrast', snapshot.highContrast);
+    document.body.classList.toggle('pull-cast', snapshot.controlMode === 'pull-cast');
     const renderKey = JSON.stringify(snapshot);
     if (renderKey === this.lastRenderKey) return;
     this.lastRenderKey = renderKey;
@@ -78,7 +79,7 @@ export class HudController {
         <div class="meter flow-meter"><span>${i18n.t('hud.flow')}</span><strong>x${snapshot.flow.toFixed(1)}</strong>
           <i><b style="width:${snapshot.flow / 3 * 100}%"></b></i>
         </div>
-        <div class="meter tension-meter"><span>${i18n.t('hud.tension')}</span><strong>${Math.round(snapshot.tension * 100)}%</strong>
+        <div class="meter tension-meter"><span>${i18n.t(snapshot.controlMode === 'pull-cast' ? 'hud.strain' : 'hud.tension')}</span><strong>${Math.round(snapshot.tension * 100)}%</strong>
           <i><b style="width:${Math.min(100, snapshot.tension * 100)}%"></b><em></em></i>
         </div>
         <div class="parry-bank ${snapshot.capturedShots > 0 ? 'armed' : ''}">
@@ -104,8 +105,9 @@ export class HudController {
 
   private renderTutorial(snapshot: RuntimeSnapshot): string {
     if (snapshot.phase !== 'playing' && snapshot.phase !== 'ready') return '';
-    const key = snapshot.tutorialStep <= 0 ? 'tutorial.deploy'
-      : snapshot.tutorialStep === 1 ? 'tutorial.snap'
+    const remote = snapshot.controlMode === 'pull-cast';
+    const key = snapshot.tutorialStep <= 0 ? (remote ? 'tutorial.deployRemote' : 'tutorial.deploy')
+      : snapshot.tutorialStep === 1 ? (remote ? 'tutorial.snapRemote' : 'tutorial.snap')
         : snapshot.tutorialStep === 2 ? 'tutorial.parry'
           : snapshot.tutorialStep === 3 ? 'tutorial.chord' : '';
     return key ? `<div class="tutorial-tip ${snapshot.phase === 'ready' ? 'ready-tip' : ''}"><span>${snapshot.tutorialStep + 1}</span>${i18n.t(key)}</div>` : '';
@@ -119,7 +121,8 @@ export class HudController {
           <span class="sup-title">PLAYER FIT PROTOTYPE</span>
           <h1>${i18n.t('game.title')}</h1>
           <p>${i18n.t('game.tagline')}</p>
-          <div class="drag-hint"><span class="mouse-gesture">⌁</span>${i18n.t('ready.hint')}</div>
+          <div class="drag-hint"><span class="mouse-gesture">⌁</span>${i18n.t(snapshot.controlMode === 'pull-cast' ? 'ready.hintRemote' : 'ready.hint')}</div>
+          ${this.settings(snapshot, true)}
         </div>
         <div class="needle-picker-shell">
           <div class="needle-picker-heading">
@@ -201,10 +204,11 @@ export class HudController {
     </div></section>`;
   }
 
-  private settings(snapshot: RuntimeSnapshot): string {
+  private settings(snapshot: RuntimeSnapshot, controlOnly = false): string {
     return `<div class="settings-row">
-      <label><input type="checkbox" data-setting="motion" ${snapshot.reducedMotion ? 'checked' : ''}> ${i18n.t('hud.reducedMotion')}</label>
-      <label><input type="checkbox" data-setting="contrast" ${snapshot.highContrast ? 'checked' : ''}> ${i18n.t('hud.highContrast')}</label>
+      <label><input type="checkbox" data-setting="control" ${snapshot.controlMode === 'pull-cast' ? 'checked' : ''}> ${i18n.t('hud.controlRemote')}</label>
+      ${controlOnly ? '' : `<label><input type="checkbox" data-setting="motion" ${snapshot.reducedMotion ? 'checked' : ''}> ${i18n.t('hud.reducedMotion')}</label>
+      <label><input type="checkbox" data-setting="contrast" ${snapshot.highContrast ? 'checked' : ''}> ${i18n.t('hud.highContrast')}</label>`}
     </div>`;
   }
 
@@ -226,5 +230,6 @@ export class HudController {
     if (!input) return;
     if (input.dataset.setting === 'motion') this.runtime.setReducedMotion(input.checked);
     if (input.dataset.setting === 'contrast') this.runtime.setHighContrast(input.checked);
+    if (input.dataset.setting === 'control') this.runtime.setControlMode(input.checked ? 'pull-cast' : 'drag-anchor');
   };
 }

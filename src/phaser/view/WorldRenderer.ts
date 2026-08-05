@@ -264,10 +264,11 @@ export class WorldRenderer {
     const tensionColor = player.tension < 0.7 ? needle.color : player.tension < 0.9 ? 0xffd75a : 0xff5f7f;
     this.glow.lineStyle(12, tensionColor, 0.11).strokePoints(points, false);
     this.world.lineStyle(state.highContrast ? 6 : 4, tensionColor, 0.96).strokePoints(points, false);
-    const chordStart = geometry.sampled.at(-1) ?? player.needle;
-    this.glow.lineStyle(10, 0xffd75a, 0.1).lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
+    const chordStart = geometry.chordStart;
+    const chordEnd = geometry.chordEnd;
+    this.glow.lineStyle(10, 0xffd75a, 0.1).lineBetween(chordStart.x, chordStart.y, chordEnd.x, chordEnd.y);
     this.world.lineStyle(state.highContrast ? 5 : 3, 0xffe786, 0.78)
-      .lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
+      .lineBetween(chordStart.x, chordStart.y, chordEnd.x, chordEnd.y);
     if (geometry.sampled.length > 4) {
       const polygon = geometry.polygon.map((point) => new Phaser.Math.Vector2(point.x, point.y));
       this.world.fillStyle(tensionColor, state.highContrast ? 0.24 : 0.18).fillPoints(polygon, true);
@@ -275,11 +276,12 @@ export class WorldRenderer {
         this.drawCapturePreview(state, geometry);
       }
     }
+    if (state.controlMode === 'pull-cast') this.drawLandingGhost(state);
   }
 
   private drawCapturePreview(state: GameState, geometry: ReturnType<typeof buildLoopGeometry>): void {
-    const chordStart = geometry.sampled.at(-1) ?? state.player.needle;
-    const chordEnd = state.player.anchor;
+    const chordStart = geometry.chordStart;
+    const chordEnd = geometry.chordEnd;
     for (const enemy of state.enemies) {
       if (enemy.dead) continue;
       const inside = isEnemyInsideLoop(enemy, geometry);
@@ -317,6 +319,28 @@ export class WorldRenderer {
       }
       if (enemy.armor > 0) this.drawArmorTarget(enemy, chordHit, state.elapsed);
     }
+  }
+
+  private drawLandingGhost(state: GameState): void {
+    const target = state.player.landingTarget;
+    if (!target) return;
+    let danger = 0;
+    for (const enemy of state.enemies) {
+      if (enemy.dead) continue;
+      const gap = Math.hypot(enemy.x - target.x, enemy.y - target.y) - enemy.radius;
+      if (gap > 24) continue;
+      danger = enemy.type === 'bomb-bloom' ? 2 : Math.max(danger, 1);
+    }
+    const color = danger === 2 ? 0xff426f : danger === 1 ? 0xffd75a : 0x8ff4ff;
+    const pulse = state.reducedMotion ? 1 : 1 + Math.sin(state.elapsed * 7) * 0.1;
+    this.glow.lineStyle(10, color, 0.16).strokeCircle(target.x, target.y, 22 * pulse);
+    this.world.lineStyle(state.highContrast ? 5 : 3, color, 0.92).strokeCircle(target.x, target.y, 18 * pulse);
+    this.world.lineStyle(2, color, 0.72);
+    this.world.lineBetween(target.x - 27, target.y, target.x - 10, target.y);
+    this.world.lineBetween(target.x + 10, target.y, target.x + 27, target.y);
+    this.world.lineBetween(target.x, target.y - 27, target.x, target.y - 10);
+    this.world.lineBetween(target.x, target.y + 10, target.x, target.y + 27);
+    this.glow.lineStyle(5, color, 0.08).lineBetween(state.player.anchor.x, state.player.anchor.y, target.x, target.y);
   }
 
   private drawArmorTarget(enemy: EnemyState, chordHit: boolean, elapsed: number): void {

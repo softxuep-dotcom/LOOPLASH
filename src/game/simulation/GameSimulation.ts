@@ -1,4 +1,4 @@
-import type { InputFrame, NeedleId, RuntimeSnapshot } from '../core/types';
+import type { ControlMode, InputFrame, NeedleId, RuntimeSnapshot } from '../core/types';
 import { NEEDLES } from '../content/needles';
 import { createInitialState } from './state';
 import { SimulationContext } from './SimulationContext';
@@ -45,6 +45,7 @@ export class GameSimulation {
     const state = createInitialState(old.width, old.height, seed, old.player.needleId);
     state.reducedMotion = old.reducedMotion;
     state.highContrast = old.highContrast;
+    state.controlMode = old.controlMode;
     this.context.replaceState(state);
     this.progression.initializeRun();
   }
@@ -58,6 +59,8 @@ export class GameSimulation {
     if (oldWidth <= 0 || oldHeight <= 0) {
       state.player.drawing = false;
       state.player.path = [];
+      state.player.landingTarget = null;
+      state.player.pull = null;
       this.layoutFromUninitializedSize(width, height);
       return;
     }
@@ -73,6 +76,11 @@ export class GameSimulation {
 
     layoutPoint(state.player.anchor);
     layoutPoint(state.player.needle);
+    if (state.player.landingTarget) layoutPoint(state.player.landingTarget);
+    if (state.player.pull) {
+      layoutPoint(state.player.pull.start);
+      layoutPoint(state.player.pull.end);
+    }
     for (const point of state.player.path) layoutPoint(point);
     for (const enemy of state.enemies) layoutPoint(enemy);
     for (const projectile of state.projectiles) layoutPoint(projectile);
@@ -164,6 +172,19 @@ export class GameSimulation {
     this.context.state.highContrast = enabled;
   }
 
+  setControlMode(mode: ControlMode): void {
+    const state = this.context.state;
+    if (state.controlMode === mode) return;
+    this.loop.forceSafeRelease();
+    state.controlMode = mode;
+    state.player.pull = null;
+    state.player.recovery = 0;
+    state.player.landingTarget = null;
+    state.player.path = [];
+    state.player.drawing = false;
+    state.player.tension = 0;
+  }
+
   snapshot(): RuntimeSnapshot {
     const state = this.context.state;
     const needle = NEEDLES[state.player.needleId];
@@ -179,6 +200,7 @@ export class GameSimulation {
       shield: state.player.shield,
       flow: state.player.flow,
       tension: state.player.tension,
+      recovery: state.player.recovery,
       capturedShots: state.player.capturedShots,
       projectileCapacity: needle.projectileCapacity + Math.round(modifiers.projectileCapacity),
       needleId: state.player.needleId,
@@ -190,6 +212,7 @@ export class GameSimulation {
       ruleChoices: [...state.ruleChoices],
       bannerKey: state.bannerKey,
       tutorialStep: state.tutorialStep,
+      controlMode: state.controlMode,
       reducedMotion: state.reducedMotion,
       highContrast: state.highContrast
     };

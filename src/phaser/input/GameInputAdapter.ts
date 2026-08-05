@@ -37,6 +37,7 @@ export class GameInputAdapter {
   poll(delta: number): InputFrame {
     let pointerPressed = false;
     let pointerReleased = false;
+    const pointerTrail: Vec2[] = [];
     // Drain the entire queue every poll. A 120Hz touchscreen emits pointer
     // events twice as fast as the 60Hz fixed step polls them, so consuming one
     // per poll let the backlog — and the visible lag between finger and rope —
@@ -44,6 +45,7 @@ export class GameInputAdapter {
     // beginning of the stroke.
     for (let event = this.pointerEvents.shift(); event; event = this.pointerEvents.shift()) {
       this.pointerPosition = event.position;
+      pointerTrail.push({ ...event.position });
       if (event.type === 'down') {
         this.simulatedPointerDown = true;
         pointerPressed = true;
@@ -79,6 +81,7 @@ export class GameInputAdapter {
       // it from the anchor. Included on the release frame too, so the snap uses
       // the final position rather than the previous one.
       pointer: this.simulatedPointerDown || pointerReleased ? { ...this.pointerPosition } : null,
+      pointerTrail,
       steer: { ...this.keyboardSteer },
       pausePressed: Phaser.Input.Keyboard.JustDown(this.pauseKey)
     };

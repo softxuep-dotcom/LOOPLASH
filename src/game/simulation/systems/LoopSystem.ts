@@ -21,9 +21,20 @@ import {
   needleSpeed,
   PATH_SAMPLE_DISTANCE
 } from '../loopGeometry';
+import { evaluateLoopQuality } from '../loopScoring';
+import {
+  clampLandingPoint,
+  poleOfInaccessibility,
+  polylineLength
+} from '../landingGeometry';
 
 /** Time constant for dissolving the touch-down grab offset. */
 const GRAB_DECAY_TIME = 0.06;
+const SWEET_MIN = 0.65;
+const SWEET_MAX = 0.88;
+const MAX_PULL_AND_RECOVERY = 0.5;
+
+type SnapReason = 'release' | 'overstrain' | 'hit' | 'safe';
 
 export class LoopSystem {
   constructor(
@@ -36,31 +47,34 @@ export class LoopSystem {
     const player = state.player;
     if (state.phase !== 'ready' && state.phase !== 'playing') return;
 
-    if (input.deployPressed && !player.drawing) {
+    player.recovery = Math.max(0, player.recovery - delta);
+    this.updatePull(delta);
+
+    if (player.pendingWeakSnap) {
+      player.pendingWeakSnap = false;
+      if (player.drawing) this.snap('hit');
+    }
+
+    if (input.deployPressed && !player.drawing && !player.pull) {
       if (state.phase === 'ready') {
         state.previousPhase = state.phase;
         state.phase = 'playing';
       }
-      player.drawing = true;
-      player.path = [{ ...player.anchor }];
-      player.tension = 0;
-      // Absorb the gap between the resting needle and the touch point so the
-      // first frame does not teleport the needle. GRAB_DECAY_TIME dissolves it.
-      player.grabOffset = input.pointer
-        ? { x: player.needle.x - input.pointer.x, y: player.needle.y - input.pointer.y }
-        : { x: 0, y: 0 };
+      this.beginDrawing(input);
       state.tutorialStep = Math.max(state.tutorialStep, 1);
     }
 
-    if (player.drawing && input.deployHeld) {
+    // Include the release position. On high-refresh touchscreens it can be the
+    // final meaningful segment of the stroke.
+    if (player.drawing && (input.deployHeld || input.deployReleased)) {
       this.updateDrawing(delta, input);
     }
 
     if (player.drawing && input.deployReleased) {
-      this.snap();
+      this.snap('release');
     }
 
-    if (!player.drawing) {
+    if (!player.drawing && !player.pull) {
       const orbit = state.elapsed * 2.2;
       player.needle.x = lerp(player.needle.x, player.anchor.x + Math.cos(orbit) * 38, clamp(delta * 8, 0, 1));
       player.needle.y = lerp(player.needle.y, player.anchor.y + Math.sin(orbit) * 38, clamp(delta * 8, 0, 1));
@@ -69,7 +83,33 @@ export class LoopSystem {
   }
 
   forceSafeRelease(): void {
-    if (this.context.state.player.drawing) this.snap(true);
+    if (this.context.state.player.drawing) this.snap('safe');
+  }
+
+  private beginDrawing(input: InputFrame): void {
+    const state = this.context.state;
+    const player = state.player;
+    player.drawing = true;
+    player.tension = 0;
+    player.landingTarget = null;
+
+    if (state.controlMode === 'pull-cast') {
+      const target = input.pointer ? this.clampPointer(input.pointer) : this.keyboardTarget(input);
+      // Outside recovery, remote casting is deliberately one-to-one. During
+      // soft recovery the next stroke starts at the visible needle and catches
+      // up at reduced speed instead of disabling input.
+      if (player.recovery <= 0) player.needle = { ...target };
+      player.path = [{ ...player.needle }];
+      player.grabOffset = { x: 0, y: 0 };
+      return;
+    }
+
+    player.path = [{ ...player.anchor }];
+    // Absorb the gap between the resting needle and the touch point so the
+    // first frame does not teleport the needle. GRAB_DECAY_TIME dissolves it.
+    player.grabOffset = input.pointer
+      ? { x: player.needle.x - input.pointer.x, y: player.needle.y - input.pointer.y }
+      : { x: 0, y: 0 };
   }
 
   /**
@@ -97,6 +137,10 @@ export class LoopSystem {
 
   private updateDrawing(delta: number, input: InputFrame): void {
     const state = this.context.state;
+    if (state.controlMode === 'pull-cast') {
+      this.updateRemoteDrawing(delta, input);
+      return;
+    }
     const player = state.player;
     const needle = NEEDLES[player.needleId];
     const patterns = getPatternModifiers(state);
@@ -134,7 +178,91 @@ export class LoopSystem {
       this.interceptProjectiles(last ?? player.anchor, player.needle);
     }
 
-    if (player.tension >= 1) this.snap(true);
+    if (player.tension >= 1) this.snap('overstrain');
+  }
+
+  private updateRemoteDrawing(delta: number, input: InputFrame): void {
+    const state = this.context.state;
+    const player = state.player;
+    const rawTargets = input.pointerTrail && input.pointerTrail.length > 0
+      ? input.pointerTrail
+      : input.pointer ? [input.pointer] : [this.keyboardTarget(input)];
+    const targets = rawTargets.map((point) => this.clampPointer(point));
+    const slice = delta / Math.max(1, targets.length);
+    let addedPoint = false;
+
+    for (const target of targets) {
+      const start = { ...player.needle };
+      if (player.recovery <= 0) {
+        player.needle.x = target.x;
+        player.needle.y = target.y;
+      } else {
+        const maxStep = needleSpeed(state) * 0.42 * slice;
+        const alpha = clamp(maxStep / Math.max(1, distance(start, target)), 0, 1);
+        player.needle.x = lerp(start.x, target.x, alpha);
+        player.needle.y = lerp(start.y, target.y, alpha);
+      }
+
+      const last = player.path.at(-1);
+      if (!last || distance(last, player.needle) >= PATH_SAMPLE_DISTANCE) {
+        player.path.push({ ...player.needle });
+        if (player.path.length > MAX_RAW_PATH_POINTS) player.path.shift();
+        this.interceptProjectiles(last ?? start, player.needle);
+        addedPoint = true;
+      }
+    }
+
+    if (addedPoint && player.path.length >= 3) this.refreshRemoteLanding(6);
+    const geometry = buildLoopGeometry(state);
+    const landing = player.landingTarget ?? player.needle;
+    const reach = Math.max(1, needleMaxLength(state));
+    const travel = distance(player.anchor, landing) / reach;
+    const stroke = polylineLength(geometry.sampled) / (reach * 2.6);
+    const needle = NEEDLES[player.needleId];
+    const patterns = getPatternModifiers(state);
+    const world = getWorldModifiers(state);
+    // Needle identities still bias strain, but are compressed in this mode so
+    // the same well-shaped loop does not fall out of the sweet band solely due
+    // to loadout. The squared stroke term is the hard answer to large-loop
+    // dominance: doubling circumference costs roughly four times as much.
+    const needleRate = 1 + (needle.tensionRate - 1) * 0.35;
+    player.tension = clamp(
+      (travel * 0.28 + stroke * stroke * 0.5)
+        * needleRate * patterns.tensionRate * world.tensionRate,
+      0,
+      1.06
+    );
+    if (player.tension >= 1) this.snap('overstrain');
+  }
+
+  private refreshRemoteLanding(precision: number): Vec2 | null {
+    const state = this.context.state;
+    const geometry = buildLoopGeometry(state);
+    if (geometry.sampled.length < 4 || polygonArea(geometry.polygon) < MIN_LOOP_AREA) {
+      state.player.landingTarget = null;
+      return null;
+    }
+    const pole = poleOfInaccessibility(geometry.polygon, precision);
+    state.player.landingTarget = pole
+      ? clampLandingPoint(pole, state.width, state.height)
+      : null;
+    return state.player.landingTarget;
+  }
+
+  private clampPointer(point: Vec2): Vec2 {
+    const state = this.context.state;
+    return {
+      x: clamp(point.x, 0, Math.max(0, state.width)),
+      y: clamp(point.y, 0, Math.max(0, state.height))
+    };
+  }
+
+  private keyboardTarget(input: InputFrame): Vec2 {
+    const state = this.context.state;
+    return this.clampPointer({
+      x: state.player.anchor.x + input.steer.x,
+      y: state.player.anchor.y + input.steer.y
+    });
   }
 
   private interceptProjectiles(start: Vec2, end: Vec2): void {
@@ -155,20 +283,26 @@ export class LoopSystem {
     }
   }
 
-  private snap(forced = false): void {
+  private snap(reason: SnapReason = 'release'): void {
     const state = this.context.state;
     const player = state.player;
     const needleDefinition = NEEDLES[player.needleId];
-    player.drawing = false;
     const geometry = buildLoopGeometry(state);
     const { sampled, polygon } = geometry;
     const area = polygonArea(polygon);
-    const chordStart = sampled[sampled.length - 1] ?? player.needle;
-    const chordEnd = { ...player.anchor };
-    const sweet = !forced && player.tension >= 0.7 && player.tension <= 0.9;
+    const chordStart = geometry.chordStart;
+    const chordEnd = geometry.chordEnd;
+    const valid = area >= MIN_LOOP_AREA && sampled.length >= 4;
+    const remote = state.controlMode === 'pull-cast';
+    const destination = remote && valid
+      ? (this.refreshRemoteLanding(1.5) ?? { ...player.anchor })
+      : { ...player.anchor };
+    const forced = reason !== 'release';
+    const sweet = !forced && player.tension >= SWEET_MIN && player.tension <= SWEET_MAX;
+    player.drawing = false;
     player.lastSnapWasSweet = sweet;
     this.context.effect({
-      type: 'snap', x: player.anchor.x, y: player.anchor.y,
+      type: 'snap', x: destination.x, y: destination.y,
       radius: Math.min(220, Math.sqrt(Math.max(area, 1)) * 1.35),
       color: sweet ? 0xffd75a : 0xff5f7f, life: state.reducedMotion ? 0.18 : 0.42
     });
@@ -177,10 +311,11 @@ export class LoopSystem {
       radius: 1, color: sweet ? 0xffe76d : 0xff91a4, life: 0.24
     });
 
-    if (area < MIN_LOOP_AREA || sampled.length < 4) {
+    if (!valid) {
       player.combo = Math.max(0, player.combo - 1);
       player.flow = Math.max(1, player.flow - 0.25);
       player.path = [];
+      player.landingTarget = null;
       player.tension = forced ? 0.45 : 0;
       return;
     }
@@ -266,30 +401,34 @@ export class LoopSystem {
     if (state.objective.id === 'knotbreak') state.objective.current += brokenKnots;
     if (brokenKnots > 0) state.tutorialStep = Math.max(state.tutorialStep, 4);
 
-    if (player.capturedShots > 0) {
+    const shotsAtSnap = player.capturedShots;
+    if (shotsAtSnap > 0) {
       const burst = 115 + player.capturedShots * 16 + modifiers.snapBlast;
       const damage = Math.max(1, Math.floor(player.capturedShots * 0.4 * modifiers.reflectedPower));
       for (const enemy of state.enemies) {
-        if (enemy.dead || distance(enemy, player.anchor) > burst + enemy.radius) continue;
+        if (enemy.dead || distance(enemy, destination) > burst + enemy.radius) continue;
         if (enemy.armor > 0) enemy.armor = Math.max(0, enemy.armor - damage);
         else enemy.health -= damage;
         if (enemy.health <= 0) enemy.dead = true;
       }
-      this.context.effect({ type: 'burst', x: player.anchor.x, y: player.anchor.y, radius: burst, color: 0xa993ff, life: 0.55 });
+      this.context.effect({ type: 'burst', x: destination.x, y: destination.y, radius: burst, color: 0xa993ff, life: 0.55 });
       player.capturedShots = 0;
     }
 
-    if (modifiers.snapBlast > 0) this.applySnapBlast(player.anchor, modifiers.snapBlast, 1);
+    if (modifiers.snapBlast > 0) this.applySnapBlast(destination, modifiers.snapBlast, 1);
 
-    const targetArea = Math.max(1, captures * 1150);
-    const precision = clamp(targetArea / area, 0.35, 1.25);
+    const quality = evaluateLoopQuality(polygon, needleDefinition.maxLength, captures);
     const group = 1 + Math.min(1.2, Math.max(0, captures - 1) * 0.13);
-    const tension = sweet ? 1.5 : player.tension > 0.9 ? 0.7 : 1;
+    const tension = sweet
+      ? 1.3
+      : remote && (reason === 'overstrain' || reason === 'hit') ? 0.3
+        : player.tension > 0.9 ? 0.85 : 1;
     if (captures > 0 || brokenKnots > 0) {
       player.combo += 1;
       player.flow = clamp(player.flow + 0.28 + captures * 0.05, 1, 3);
       player.flowGrace = 2.5 + modifiers.flowGrace;
-      const points = (captureScore + brokenKnots * 140 + 70) * precision * group * tension * player.flow
+      const points = (captureScore + brokenKnots * 140 + 70) * quality.precision * quality.cleanliness
+        * group * tension * player.flow
         * modifiers.scoreMultiplier * world.scoreMultiplier;
       player.score += Math.round(points);
       player.totalCaptures += captures;
@@ -298,7 +437,7 @@ export class LoopSystem {
         player.hearts = Math.min(player.maxHearts, player.hearts + 1);
         this.context.effect({ type: 'heal', x: player.anchor.x, y: player.anchor.y, radius: 48, color: 0xa8f096, life: 0.6 });
       }
-      this.addEssence(this.dominantEssence(essences));
+      this.addEssence(this.dominantEssence(essences), destination);
       state.tutorialStep = Math.max(state.tutorialStep, 2);
     } else {
       player.combo = Math.max(0, player.combo - 1);
@@ -306,6 +445,10 @@ export class LoopSystem {
     }
 
     player.path = [];
+    player.landingTarget = null;
+    if (remote && state.phase === 'playing') {
+      this.beginPull(destination, reason, captures > 0 || brokenKnots > 0 || shotsAtSnap > 0);
+    }
     player.tension = forced ? 0.55 : 0;
   }
 
@@ -316,7 +459,7 @@ export class LoopSystem {
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   }
 
-  private addEssence(essence: Essence | null): void {
+  private addEssence(essence: Essence | null, effectCenter: Vec2): void {
     if (!essence) return;
     const state = this.context.state;
     const world = getWorldModifiers(state);
@@ -330,18 +473,63 @@ export class LoopSystem {
     const unique = new Set(concrete);
     const family = concrete[0];
     if (family && concrete.every((item) => item === family)) {
-      if (family === 'ember') this.applySnapBlast(player.anchor, 185, 2);
+      if (family === 'ember') this.applySnapBlast(effectCenter, 185, 2);
       if (family === 'tide') {
         for (const enemy of state.enemies) enemy.speed *= 0.76;
-        this.context.effect({ type: 'burst', x: player.anchor.x, y: player.anchor.y, radius: 210, color: 0x63d8ef, life: 0.8 });
+        this.context.effect({ type: 'burst', x: effectCenter.x, y: effectCenter.y, radius: 210, color: 0x63d8ef, life: 0.8 });
       }
       if (family === 'seed') player.shield = Math.min(2, player.shield + 1);
       if (family === 'prism') player.capturedShots += 3;
     } else if (unique.size >= 2 || recipe.includes('wild')) {
       player.flow = clamp(player.flow + 0.8, 1, 3);
       player.shield = Math.min(2, player.shield + 1);
-      this.context.effect({ type: 'burst', x: player.anchor.x, y: player.anchor.y, radius: 160, color: 0xffd75a, life: 0.65 });
+      this.context.effect({ type: 'burst', x: effectCenter.x, y: effectCenter.y, radius: 160, color: 0xffd75a, life: 0.65 });
     }
+  }
+
+  private beginPull(destination: Vec2, reason: SnapReason, productive: boolean): void {
+    const state = this.context.state;
+    const player = state.player;
+    const patterns = getPatternModifiers(state);
+    const needle = NEEDLES[player.needleId];
+    const shortSide = Math.max(1, Math.min(state.width, state.height));
+    const travelRatio = distance(player.anchor, destination) / shortSide;
+    const pullPower = Math.max(0.35, (needle.anchorPull * patterns.anchorPull) / NEEDLES.dawn.anchorPull);
+    const pullDuration = distance(player.anchor, destination) <= 2
+      ? 0
+      : clamp((0.08 + travelRatio * 0.24) / Math.sqrt(pullPower), 0.07, 0.2);
+    let recovery = 0.1 + player.tension * 0.16 + travelRatio * 0.15;
+    if (player.lastSnapWasSweet) recovery *= 0.62;
+    if (reason === 'overstrain' || reason === 'hit') recovery *= 2;
+    if (!productive) recovery *= 1.2;
+    player.recovery = clamp(recovery, 0.06, Math.max(0.06, MAX_PULL_AND_RECOVERY - pullDuration));
+
+    if (pullDuration > 0) {
+      player.pull = {
+        start: { ...player.anchor },
+        end: { ...destination },
+        elapsed: 0,
+        duration: pullDuration
+      };
+    } else {
+      player.anchor = { ...destination };
+      player.pull = null;
+    }
+  }
+
+  private updatePull(delta: number): void {
+    const player = this.context.state.player;
+    const pull = player.pull;
+    if (!pull) return;
+    const before = { ...player.anchor };
+    pull.elapsed = Math.min(pull.duration, pull.elapsed + delta);
+    const linear = pull.duration <= 0 ? 1 : pull.elapsed / pull.duration;
+    const eased = 1 - Math.pow(1 - linear, 3);
+    player.anchor.x = lerp(pull.start.x, pull.end.x, eased);
+    player.anchor.y = lerp(pull.start.y, pull.end.y, eased);
+    player.needle.x += player.anchor.x - before.x;
+    player.needle.y += player.anchor.y - before.y;
+    if (linear >= 1) player.pull = null;
   }
 
   private applySnapBlast(center: Vec2, radius: number, damage: number): void {

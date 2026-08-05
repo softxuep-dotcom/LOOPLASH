@@ -1,12 +1,16 @@
-import type { InputFrame, Vec2 } from '../src/game/core/types.ts';
+import type { InputFrame, NeedleId, Vec2 } from '../src/game/core/types.ts';
 import { GameSimulation } from '../src/game/simulation/GameSimulation.ts';
 import { ENEMIES } from '../src/game/content/enemies.ts';
 import { ELITES } from '../src/game/content/elites.ts';
-import { NEEDLE_LIST } from '../src/game/content/needles.ts';
+import { NEEDLES, NEEDLE_LIST } from '../src/game/content/needles.ts';
 import { PATTERNS, SEAMS } from '../src/game/content/patterns.ts';
 import { WORLD_RULES } from '../src/game/content/worldRules.ts';
 import { requiredStageSupply, STAGES } from '../src/game/content/encounters.ts';
 import { needleMaxLength } from '../src/game/simulation/loopGeometry.ts';
+import { evaluateLoopQuality } from '../src/game/simulation/loopScoring.ts';
+import { clampLandingPoint, poleOfInaccessibility } from '../src/game/simulation/landingGeometry.ts';
+import { pointInPolygon } from '../src/game/core/math.ts';
+import { hurtPlayer } from '../src/game/simulation/systems/EnemySystem.ts';
 
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Smoke test failed: ${message}`);
@@ -26,9 +30,19 @@ function step(simulation: GameSimulation, frames: number, input: InputFrame = id
 }
 
 function drawLoop(simulation: GameSimulation, points: Vec2[]): void {
-  simulation.step(1 / 60, { ...idle, deployPressed: true, deployHeld: true, steer: points[0]! });
-  for (const point of points) step(simulation, 3, { ...idle, deployHeld: true, steer: point });
-  simulation.step(1 / 60, { ...idle, deployReleased: true, steer: points.at(-1)! });
+  const state = simulation.context.state;
+  for (let frame = 0; frame < 30 && state.player.pull; frame += 1) step(simulation, 1);
+  if (state.controlMode === 'drag-anchor') {
+    simulation.step(1 / 60, { ...idle, deployPressed: true, deployHeld: true, steer: points[0]! });
+    for (const point of points) step(simulation, 3, { ...idle, deployHeld: true, steer: point });
+    simulation.step(1 / 60, { ...idle, deployReleased: true, steer: points.at(-1)! });
+    return;
+  }
+  const origin = { ...state.player.anchor };
+  const absolute = points.map((point) => ({ x: origin.x + point.x, y: origin.y + point.y }));
+  simulation.step(1 / 60, { ...idle, deployPressed: true, deployHeld: true, pointer: absolute[0]! });
+  for (const point of absolute) step(simulation, 3, { ...idle, deployHeld: true, pointer: point });
+  simulation.step(1 / 60, { ...idle, deployReleased: true, pointer: absolute.at(-1)! });
 }
 
 function completeOnboardingMechanics(simulation: GameSimulation): void {
@@ -38,30 +52,91 @@ function completeOnboardingMechanics(simulation: GameSimulation): void {
   const shot = state.projectiles[0];
   invariant(shot, 'parry lesson should produce a real projectile');
 
-  // Put the live shot on the first real trail segment, then draw that segment.
+  // Put the live shot on a real remote stroke segment, then draw through it.
   // This exercises LoopSystem interception rather than advancing tutorial state directly.
-  shot.x = (state.player.anchor.x + state.player.needle.x) * 0.5;
-  shot.y = (state.player.anchor.y + state.player.needle.y) * 0.5;
+  const strokeStart = { x: state.player.anchor.x - 90, y: state.player.anchor.y - 80 };
+  const strokeEnd = { x: state.player.anchor.x + 90, y: state.player.anchor.y - 80 };
+  shot.x = (strokeStart.x + strokeEnd.x) * 0.5;
+  shot.y = (strokeStart.y + strokeEnd.y) * 0.5;
   shot.vx = 0;
   shot.vy = 0;
   simulation.step(1 / 60, {
     ...idle,
     deployPressed: true,
     deployHeld: true,
-    pointer: { ...state.player.needle }
+    pointer: strokeStart
   });
+  simulation.step(1 / 60, { ...idle, deployHeld: true, pointer: strokeEnd });
   invariant(state.player.capturedShots > 0, 'live thread should catch the tutorial projectile');
   invariant(state.tutorialStep === 3, 'catching a projectile should advance to the armor lesson');
-  simulation.step(1 / 60, { ...idle, deployReleased: true });
+  simulation.step(1 / 60, { ...idle, deployReleased: true, pointer: strokeEnd });
 
   for (let frame = 0; frame < 600 && !state.enemies.some((enemy) => enemy.type === 'shellbud'); frame += 1) step(simulation, 1);
   const shellbud = state.enemies.find((enemy) => enemy.type === 'shellbud');
   invariant(shellbud, 'armor lesson should produce a real shellbud');
   shellbud.speed = 0;
-  shellbud.x = state.player.anchor.x + 10;
-  shellbud.y = state.player.anchor.y + 58;
+  shellbud.x = state.player.anchor.x - 64;
+  shellbud.y = state.player.anchor.y + 73;
   drawLoop(simulation, objectiveLoop);
   invariant(state.tutorialStep >= 4, 'a closing chord through the shellbud should complete onboarding');
+}
+
+function measureNeedleScore(needleId: NeedleId): number {
+  const simulation = new GameSimulation(1280, 720, 29);
+  simulation.setControlMode('drag-anchor');
+  simulation.chooseNeedle(needleId);
+  const state = simulation.context.state;
+  const scale = NEEDLES[needleId].maxLength / NEEDLES.dawn.maxLength;
+  const offsets = [-72, 0, 72];
+  state.enemies.forEach((enemy, index) => {
+    enemy.speed = 0;
+    enemy.x = state.player.anchor.x + offsets[index]! * scale;
+    enemy.y = state.player.anchor.y - 74 * scale;
+  });
+  drawLoop(simulation, objectiveLoop.map((point) => ({ x: point.x * scale, y: point.y * scale })));
+  return state.player.score;
+}
+
+const scribbleLoop: Vec2[] = [
+  { x: -265, y: 0 }, { x: 0, y: -250 }, { x: 265, y: 0 }, { x: 0, y: 225 },
+  { x: -210, y: -35 }, { x: 35, y: -195 }, { x: 210, y: 45 }, { x: -25, y: 170 },
+  { x: -160, y: 25 }, { x: 25, y: -135 }, { x: 150, y: 20 }, { x: 18, y: 100 }
+];
+
+function measureScribbleScore(needleId: NeedleId): number {
+  const simulation = new GameSimulation(1280, 720, 31);
+  simulation.setControlMode('drag-anchor');
+  simulation.chooseNeedle(needleId);
+  const state = simulation.context.state;
+  const offsets = [-54, 0, 54];
+  state.enemies.forEach((enemy, index) => {
+    enemy.speed = 0;
+    enemy.x = state.player.anchor.x + offsets[index]!;
+    enemy.y = state.player.anchor.y - 58;
+  });
+  drawLoop(simulation, scribbleLoop);
+  return state.player.score;
+}
+
+function measureRepeatedScribbleScore(needleId: NeedleId): number {
+  const simulation = new GameSimulation(1280, 720, 37);
+  simulation.setControlMode('drag-anchor');
+  simulation.chooseNeedle(needleId);
+  const state = simulation.context.state;
+  state.spawnTimer = 999;
+  for (let round = 0; round < 8; round += 1) {
+    state.enemies = [];
+    state.player.invulnerable = 999;
+    for (const offset of [-54, 0, 54]) {
+      const enemy = simulation.enemies.spawnNormal('puff', {
+        x: state.player.anchor.x + offset,
+        y: state.player.anchor.y - 58
+      });
+      enemy.speed = 0;
+    }
+    drawLoop(simulation, scribbleLoop);
+  }
+  return state.player.score;
 }
 
 const objectiveLoop: Vec2[] = [
@@ -83,8 +158,11 @@ function arrangeObjectiveSupply(simulation: GameSimulation): void {
       enemy.x = state.width - 70;
       enemy.y = 82;
     } else if (state.objective.id === 'knotbreak' && enemy.armor > 0) {
-      enemy.x = anchor.x + 10 + (knotIndex % 2) * 3;
-      enemy.y = anchor.y + 58 + Math.floor(knotIndex / 2) * 3;
+      const chordMidpoint = state.controlMode === 'pull-cast'
+        ? { x: -64, y: 73 }
+        : { x: 10, y: 58 };
+      enemy.x = anchor.x + chordMidpoint.x + (knotIndex % 2) * 3;
+      enemy.y = anchor.y + chordMidpoint.y + Math.floor(knotIndex / 2) * 3;
       knotIndex += 1;
     } else {
       enemy.x = anchor.x - 54 + (safeIndex % 4) * 36;
@@ -144,7 +222,7 @@ function measureStageSupply(stageIndex: number, seed: number): number {
   state.enemies = stageIndex === 0 ? state.enemies : [];
   state.projectiles = [];
   state.motes = [];
-  state.tutorialStep = 2;
+  state.tutorialStep = 4;
   state.phase = 'playing';
   state.spawnTimer = 0;
   state.bossStarted = false;
@@ -187,6 +265,122 @@ function verifyStageSupplyInvariant(): void {
   }
 }
 
+function crescent(depth: number): Vec2[] {
+  const radius = 140;
+  const innerRadius = 118;
+  const shift = radius * depth;
+  const outer = Array.from({ length: 33 }, (_, index) => {
+    const angle = -Math.PI * 0.5 - (index / 32) * Math.PI;
+    return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+  });
+  const inner = Array.from({ length: 33 }, (_, index) => {
+    const angle = Math.PI * 0.5 + (index / 32) * Math.PI;
+    return { x: shift + Math.cos(angle) * innerRadius, y: Math.sin(angle) * innerRadius };
+  });
+  return [...outer, ...inner];
+}
+
+function verifyLandingGeometry(): void {
+  for (const depth of [0.15, 0.3, 0.45, 0.6, 0.75, 0.9]) {
+    const polygon = crescent(depth);
+    const landing = poleOfInaccessibility(polygon, 0.75);
+    invariant(landing && pointInPolygon(landing, polygon), `crescent ${depth.toFixed(2)} landing must remain inside its concave loop`);
+  }
+
+  const crossing = [
+    { x: 0, y: 0 }, { x: 150, y: 140 }, { x: 0, y: 140 }, { x: 150, y: 0 }
+  ];
+  const crossingLanding = poleOfInaccessibility(crossing, 0.75);
+  invariant(crossingLanding && pointInPolygon(crossingLanding, crossing), 'self-crossing stroke landing must choose a filled lobe');
+  const clamped = clampLandingPoint({ x: -40, y: 900 }, 390, 844);
+  invariant(clamped.x === 30 && clamped.y === 814, 'landing ghost must expose the same arena-clamped target used by movement');
+}
+
+function verifyRemoteCastMechanics(): void {
+  const simulation = new GameSimulation(1280, 720, 8181);
+  const state = simulation.context.state;
+  invariant(state.controlMode === 'pull-cast', 'remote cast should be the default experiment branch');
+  state.phase = 'playing';
+  state.tutorialStep = 4;
+  state.enemies = [];
+  state.motes = [];
+  state.projectiles = [];
+  state.spawnTimer = 999;
+  state.player.flow = 2;
+  state.player.flowGrace = 999;
+  const start = { ...state.player.anchor };
+  const remoteLoop = Array.from({ length: 20 }, (_, index) => {
+    const angle = (index / 20) * Math.PI * 2;
+    return { x: 170 + Math.cos(angle) * 68, y: Math.sin(angle) * 68 };
+  });
+  drawLoop(simulation, remoteLoop);
+  const pull = state.player.pull;
+  invariant(pull, 'a valid empty remote loop should remain a legal movement action');
+  invariant(Math.hypot(state.player.anchor.x - start.x, state.player.anchor.y - start.y) < 0.01,
+    'capture resolution must finish before pull movement begins');
+  invariant(Math.abs(state.player.flow - 1.65) < 0.001, 'an empty movement loop should keep the existing -0.35 Flow cost');
+  invariant(pull.duration <= 0.2 && Math.max(pull.duration, state.player.recovery) <= 0.5,
+    'pull and soft recovery must stay within the 0.5s response budget');
+  const hearts = state.player.hearts;
+  hurtPlayer(simulation.context, 1, state.player.anchor.x, state.player.anchor.y);
+  invariant(state.player.hearts === hearts, 'travel frames should be damage-immune');
+  step(simulation, 30);
+  invariant(!state.player.pull, 'remote pull should finish promptly');
+  invariant(Math.hypot(state.player.anchor.x - pull.end.x, state.player.anchor.y - pull.end.y) < 0.01,
+    'player must finish at the exact ghost destination');
+
+  state.player.invulnerable = 0;
+  state.player.shield = 0;
+  const origin = { ...state.player.anchor };
+  const stroke = [
+    { x: origin.x - 55, y: origin.y - 55 },
+    { x: origin.x + 55, y: origin.y - 55 },
+    { x: origin.x + 55, y: origin.y + 55 },
+    { x: origin.x - 55, y: origin.y + 55 }
+  ];
+  simulation.step(1 / 60, { ...idle, deployPressed: true, deployHeld: true, pointer: stroke[0]! });
+  for (const point of stroke.slice(1)) simulation.step(1 / 60, { ...idle, deployHeld: true, pointer: point });
+  invariant(state.player.drawing, 'remote hit test should have an active valid stroke');
+  hurtPlayer(simulation.context, 1, state.player.anchor.x, state.player.anchor.y);
+  invariant(state.player.pendingWeakSnap, 'damage should request a weak snap');
+  simulation.step(1 / 60, idle);
+  invariant(!state.player.drawing && !state.player.lastSnapWasSweet && state.player.recovery > 0,
+    'weak snap should resolve the loop with forced recovery');
+}
+
+function verifyRemoteStrainBands(): void {
+  const sweetSimulation = new GameSimulation(1280, 720, 9191);
+  const sweetState = sweetSimulation.context.state;
+  sweetState.phase = 'playing';
+  sweetState.tutorialStep = 4;
+  sweetState.enemies = [];
+  sweetState.spawnTimer = 999;
+  drawLoop(sweetSimulation, objectiveLoop);
+  invariant(sweetState.player.lastSnapWasSweet, 'a deliberate medium loop should land in the 0.65-0.88 sweet band');
+  const sweetRecovery = sweetState.player.recovery;
+
+  const forcedSimulation = new GameSimulation(1280, 720, 9292);
+  const forcedState = forcedSimulation.context.state;
+  forcedState.phase = 'playing';
+  forcedState.tutorialStep = 4;
+  forcedState.enemies = [];
+  forcedState.spawnTimer = 999;
+  const origin = { ...forcedState.player.anchor };
+  const oversized = Array.from({ length: 40 }, (_, index) => {
+    const angle = (index / 40) * Math.PI * 2;
+    return { x: origin.x + Math.cos(angle) * 245, y: origin.y + Math.sin(angle) * 245 };
+  });
+  forcedSimulation.step(1 / 60, { ...idle, deployPressed: true, deployHeld: true, pointer: oversized[0]! });
+  for (const point of oversized.slice(1)) {
+    if (!forcedState.player.drawing) break;
+    forcedSimulation.step(1 / 60, { ...idle, deployHeld: true, pointer: point });
+  }
+  invariant(!forcedState.player.drawing && !forcedState.player.lastSnapWasSweet,
+    'squared stroke cost should force an oversized loop before a full orbit');
+  invariant(forcedState.player.recovery > sweetRecovery * 2,
+    'overstrain should produce materially longer soft recovery than a sweet loop');
+}
+
 invariant(Object.keys(ENEMIES).length === 8, 'Player Fit needs 8 normal enemy definitions');
 invariant(Object.keys(ELITES).length === 3, 'Player Fit needs 3 elite definitions');
 invariant(NEEDLE_LIST.length === 3, 'Player Fit needs 3 needle definitions');
@@ -195,6 +389,9 @@ invariant(WORLD_RULES.length === 6, 'Player Fit needs 6 world rules');
 invariant(SEAMS.length === 10, 'Player Fit needs 10 seams');
 invariant(new Set(STAGES.map((stage) => stage.biome)).size === 2, 'Player Fit needs 2 biomes');
 invariant(ENEMIES['bubble-ray'].armor > 0, 'Bubble Ray must supply knots in reef knotbreak stages');
+verifyLandingGeometry();
+verifyRemoteCastMechanics();
+verifyRemoteStrainBands();
 
 const needleSnapshotSimulation = new GameSimulation(1280, 720, 13);
 needleSnapshotSimulation.chooseNeedle('dawn');
@@ -203,6 +400,46 @@ needleSnapshotSimulation.chooseNeedle('twin');
 invariant(needleSnapshotSimulation.snapshot().projectileCapacity === 3, 'Twin HUD should expose three caught-shot slots');
 needleSnapshotSimulation.chooseNeedle('moon');
 invariant(needleSnapshotSimulation.snapshot().projectileCapacity === 5, 'Moon HUD should expose five caught-shot slots');
+
+const needleScores = (['dawn', 'twin', 'moon'] as const).map((needle) => measureNeedleScore(needle));
+const needleScoreSpread = Math.max(...needleScores) / Math.max(1, Math.min(...needleScores));
+invariant(
+  needleScoreSpread <= 1.2,
+  `equivalent relative loops should score within 20% across needles (dawn/twin/moon: ${needleScores.join('/')})`
+);
+const scribbleScores = (['dawn', 'twin', 'moon'] as const).map((needle) => measureScribbleScore(needle));
+const scribbleSpread = Math.max(...scribbleScores) / Math.max(1, Math.min(...scribbleScores));
+console.info(`Needle score check — clean ${needleScores.join('/')} · scribble ${scribbleScores.join('/')}`);
+invariant(
+  scribbleSpread <= 1.35,
+  `the same loose scribble should score within 35% across needles (dawn/twin/moon: ${scribbleScores.join('/')})`
+);
+const repeatedScribbleScores = (['dawn', 'twin', 'moon'] as const).map((needle) => measureRepeatedScribbleScore(needle));
+const repeatedScribbleSpread = Math.max(...repeatedScribbleScores) / Math.max(1, Math.min(...repeatedScribbleScores));
+console.info(`Repeated scribble score — dawn/twin/moon ${repeatedScribbleScores.join('/')}`);
+invariant(
+  repeatedScribbleSpread <= 1.25,
+  `repeated scribbling should score within 25% across needles (dawn/twin/moon: ${repeatedScribbleScores.join('/')})`
+);
+const cleanCircle = Array.from({ length: 24 }, (_, index) => {
+  const angle = (index / 24) * Math.PI * 2;
+  return { x: Math.cos(angle) * 120, y: Math.sin(angle) * 120 };
+});
+const cleanQuality = evaluateLoopQuality(cleanCircle, NEEDLES.dawn.maxLength, 3);
+const scribbleQuality = evaluateLoopQuality(scribbleLoop, NEEDLES.dawn.maxLength, 3);
+invariant(
+  scribbleQuality.cleanliness < cleanQuality.cleanliness * 0.75,
+  `self-crossing scribbles should earn a clear cleanliness penalty (${scribbleQuality.cleanliness.toFixed(2)} vs ${cleanQuality.cleanliness.toFixed(2)})`
+);
+for (const needle of NEEDLE_LIST) {
+  const scale = needle.maxLength / NEEDLES.dawn.maxLength;
+  const scaledCircle = cleanCircle.map((point) => ({ x: point.x * scale, y: point.y * scale }));
+  const quality = evaluateLoopQuality(scaledCircle, needle.maxLength, 3);
+  invariant(
+    Math.abs(quality.precision - cleanQuality.precision) < 0.001,
+    `${needle.id} precision should be reach-normalized`
+  );
+}
 
 const tutorialSpawnSimulation = new GameSimulation(1280, 720, 23);
 const tutorialState = tutorialSpawnSimulation.context.state;
@@ -261,4 +498,4 @@ invariant(simulation.context.state.stage === 4, 'four completed objectives shoul
 step(simulation, 1);
 invariant(simulation.context.state.enemies.some((enemy) => enemy.behavior === 'boss'), 'boss stage should spawn Tanglejaw');
 
-console.info('Simulation smoke passed: onboarding order, needle HUD stats, supply margin, responsive layout, objectives, choices, and boss entry.');
+console.info('Simulation smoke passed: needle score balance, scribble penalty, onboarding, supply, responsive layout, objectives, and boss entry.');

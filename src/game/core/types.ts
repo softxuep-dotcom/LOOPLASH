@@ -15,6 +15,7 @@ export type GamePhase =
 export type BiomeId = 'meadow' | 'reef';
 export type ObjectiveId = 'harvest' | 'rescue' | 'knotbreak';
 export type NeedleId = 'dawn' | 'twin' | 'moon';
+export type ControlMode = 'drag-anchor' | 'pull-cast';
 export type PatternFamily = 'ember' | 'tide' | 'seed' | 'prism';
 export type Essence = PatternFamily | 'wild';
 
@@ -189,6 +190,19 @@ export interface PlayerState {
   path: Vec2[];
   drawing: boolean;
   tension: number;
+  /** Actual, arena-clamped destination previewed by the landing ghost. */
+  landingTarget: Vec2 | null;
+  /** Remaining soft recovery. Drawing stays available, but the needle slows. */
+  recovery: number;
+  /** Short, damage-immune travel after a remote loop resolves. */
+  pull: {
+    start: Vec2;
+    end: Vec2;
+    elapsed: number;
+    duration: number;
+  } | null;
+  /** Set by damage and consumed by LoopSystem on its next update. */
+  pendingWeakSnap: boolean;
   hearts: number;
   maxHearts: number;
   invulnerable: number;
@@ -234,6 +248,7 @@ export interface GameState {
   stageCompleteTimer: number;
   awaitingRuleAfterPattern: boolean;
   bossStarted: boolean;
+  controlMode: ControlMode;
   reducedMotion: boolean;
   highContrast: boolean;
 }
@@ -251,6 +266,8 @@ export interface InputFrame {
    * for the whole gesture.
    */
   pointer: Vec2 | null;
+  /** Ordered pointer samples received since the previous simulation step. */
+  pointerTrail?: Vec2[];
   pausePressed: boolean;
 }
 
@@ -265,6 +282,7 @@ export interface RuntimeSnapshot {
   shield: number;
   flow: number;
   tension: number;
+  recovery: number;
   capturedShots: number;
   projectileCapacity: number;
   needleId: NeedleId;
@@ -276,6 +294,7 @@ export interface RuntimeSnapshot {
   ruleChoices: string[];
   bannerKey: string;
   tutorialStep: number;
+  controlMode: ControlMode;
   reducedMotion: boolean;
   highContrast: boolean;
 }

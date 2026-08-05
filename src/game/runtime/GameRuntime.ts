@@ -1,4 +1,4 @@
-import type { NeedleId, RuntimeSnapshot } from '../core/types';
+import type { ControlMode, NeedleId, RuntimeSnapshot } from '../core/types';
 import type { InputFrame } from '../core/types';
 import { LocalPlatformAdapter, type PlatformAdapter } from '../platform/PlatformAdapter';
 import { GameSimulation } from '../simulation/GameSimulation';
@@ -92,6 +92,11 @@ export class GameRuntime {
 
   setHighContrast(enabled: boolean): void {
     this.simulation?.setHighContrast(enabled);
+    this.emit();
+  }
+
+  setControlMode(mode: ControlMode): void {
+    this.simulation?.setControlMode(mode);
     this.emit();
   }
 
