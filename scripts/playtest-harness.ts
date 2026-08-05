@@ -12,8 +12,10 @@ import { pointInPolygon, polygonArea } from '../src/game/core/math.ts';
 import { buildLoopGeometry } from '../src/game/simulation/loopGeometry.ts';
 import { poleOfInaccessibility } from '../src/game/simulation/landingGeometry.ts';
 import { STAGES } from '../src/game/content/encounters.ts';
+import { RESCUE_LOOP_RADIUS } from '../src/game/content/rescueRules.ts';
 
 const DT = 1 / 60;
+const QUICK = process.argv.includes('--quick');
 
 const idle: InputFrame = {
   deployPressed: false,
@@ -59,6 +61,8 @@ interface LoopOptions {
   /** Perpendicular jitter in px, simulating touch tremor. */
   jitter: number;
   rng: () => number;
+  /** Absolute center for a remote cast; defaults to the player anchor. */
+  center?: Vec2;
 }
 
 interface LoopResult {
@@ -85,7 +89,7 @@ function drawLoop(sim: GameSimulation, options: LoopOptions): LoopResult {
   // Absolute pointer control: a player picks a spot on screen and sweeps around
   // it, so the gesture is anchored to where the anchor was when they touched
   // down, not to the anchor as it drifts.
-  const origin = { ...state.player.anchor };
+  const origin = options.center ? { ...options.center } : { ...state.player.anchor };
   const pointerAt = (t: number): Vec2 => {
     const angle = heading - sweep / 2 + sweep * t;
     const wobble = jitter > 0 ? (rng() - 0.5) * 2 * jitter : 0;
@@ -294,7 +298,7 @@ function playRun(
   sweep: number,
   frames: number,
   diagnostics?: { deaths: Map<string, number> },
-  mode: ControlMode = 'pull-cast'
+  mode: ControlMode = 'remote-cast'
 ): RunResult {
   const sim = new GameSimulation(1280, 720, seed);
   sim.setControlMode(mode);
@@ -302,7 +306,7 @@ function playRun(
   let loops = 0;
   let elapsedFrames = 0;
   let lastHearts = sim.context.state.player.hearts;
-  const maxFrames = 60 * 60 * 8; // 8 minutes of simulated play
+  const maxFrames = 60 * (QUICK ? 90 : 60 * 8); // focused check or full eight-minute run
 
   const noteHitCause = (): void => {
     if (!diagnostics) return;
@@ -346,8 +350,31 @@ function playRun(
 
     let heading = rng() * Math.PI * 2;
     let radius = radiusOf(rng);
+    let gestureSweep = sweep;
+    let castCenter: Vec2 | undefined;
 
-    if (nearest && nearestDist < 110 && s.player.invulnerable <= 0) {
+    if (mode === 'remote-cast' && s.objective.id === 'rescue' && s.motes.length > 0) {
+      // Model the interaction we actually teach: choose one star mote and draw
+      // one ordinary circle. No concave exclusion geometry is available to the bot.
+      const target = [...s.motes].sort((left, right) => {
+        const clearance = (mote: Vec2) => bombs.length === 0
+          ? Number.POSITIVE_INFINITY
+          : Math.min(...bombs.map((bomb) => Math.hypot(bomb.x - mote.x, bomb.y - mote.y)));
+        return clearance(right) - clearance(left);
+      })[0]!;
+      castCenter = { x: target.x, y: target.y };
+      radius = RESCUE_LOOP_RADIUS;
+      gestureSweep = Math.PI * 2;
+    } else if (mode === 'remote-cast' && threats.length > 0) {
+      const focus = [...threats]
+        .sort((left, right) => Math.hypot(left.x - anchor.x, left.y - anchor.y)
+          - Math.hypot(right.x - anchor.x, right.y - anchor.y))
+        .slice(0, 4);
+      castCenter = {
+        x: focus.reduce((sum, enemy) => sum + enemy.x, 0) / focus.length,
+        y: focus.reduce((sum, enemy) => sum + enemy.y, 0) / focus.length
+      };
+    } else if (nearest && nearestDist < 110 && s.player.invulnerable <= 0) {
       // Too close: sweep away so the tow pulls us off the threat.
       heading = Math.atan2(anchor.y - nearest.y, anchor.x - nearest.x);
       radius = Math.max(radius, 180);
@@ -365,7 +392,7 @@ function playRun(
       }
     }
 
-    const result = drawLoop(sim, { radius, heading, sweep, frames, jitter: 5, rng });
+    const result = drawLoop(sim, { radius, heading, sweep: gestureSweep, frames, jitter: 5, rng, center: castCenter });
     noteHitCause();
     loops += 1;
     elapsedFrames += result.frames;
@@ -399,8 +426,9 @@ function summarise(label: string, runs: RunResult[]): void {
 }
 
 function testLoopStrategies(): void {
-  console.info('\n=== C. Big loop vs small loop (30 seeds each) ===');
-  const seeds = Array.from({ length: 30 }, (_, i) => 7000 + i * 13);
+  const seedCount = QUICK ? 8 : 30;
+  console.info(`\n=== C. Big loop vs small loop (${seedCount} seeds each) ===`);
+  const seeds = Array.from({ length: seedCount }, (_, i) => 7000 + i * 13);
   const strategies: Array<[string, (rng: () => number) => number, number, number]> = [
     ['max loop', () => 275, Math.PI * 1.9, 40],
     ['big loop', (r) => 200 + r() * 60, Math.PI * 1.7, 36],
@@ -417,8 +445,9 @@ function testLoopStrategies(): void {
 // Test D — can a bot actually finish stage objectives without cheating?
 // ---------------------------------------------------------------------------
 function testObjectiveReachability(): void {
-  console.info('\n=== D. Objective reachability by input alone (20 seeds) ===');
-  const seeds = Array.from({ length: 20 }, (_, i) => 31000 + i * 7);
+  const seedCount = QUICK ? 8 : 20;
+  console.info(`\n=== D. Objective reachability by input alone (${seedCount} seeds) ===`);
+  const seeds = Array.from({ length: seedCount }, (_, i) => 31000 + i * 7);
   const reached = new Map<number, number>();
   const diagnostics = { deaths: new Map<string, number>() };
   let victories = 0;
@@ -433,7 +462,7 @@ function testObjectiveReachability(): void {
   }
   console.info(`  furthest stage: ${[...reached.entries()].sort((a, b) => a[0] - b[0]).map(([k, v]) => `s${k}:${v}`).join('  ')}`);
   console.info(`  victories ${victories}/${seeds.length}, deaths ${deaths}/${seeds.length}, stalled ${seeds.length - victories - deaths}`);
-  console.info(`  best single-run captures: ${bestObjective} (stage 1 objective needs 12)`);
+  console.info(`  best single-run captures: ${bestObjective} (stage 1 objective needs ${STAGES[0]!.target})`);
   const total = [...diagnostics.deaths.values()].reduce((a, b) => a + b, 0);
   const sorted = [...diagnostics.deaths.entries()].sort((a, b) => b[1] - a[1]);
   console.info(`  hearts lost by cause (${total} total): ${sorted.map(([k, v]) => `${k} ${(v / total * 100).toFixed(0)}%`).join('  ')}`);
@@ -545,15 +574,16 @@ function testStageBudget(stageIndex = 0, trials = 500): void {
 }
 
 // ---------------------------------------------------------------------------
-// Test H — direct A/B for the retained classic branch and remote pull-cast.
+// Test H — direct comparison for classic, legacy pull movement, and the
+// player-facing fixed remote cast.
 // These are the product decision metrics, kept in one compact table so a
 // tuning change cannot improve one axis while quietly regressing another.
 // ---------------------------------------------------------------------------
 function testControlModeComparison(): void {
   console.info('\n=== H. Control mode A/B ===');
-  const modes: ControlMode[] = ['drag-anchor', 'pull-cast'];
+  const modes: ControlMode[] = ['drag-anchor', 'pull-cast', 'remote-cast'];
   for (const mode of modes) {
-    const rng = makeRng(mode === 'pull-cast' ? 7701 : 7702);
+    const rng = makeRng(mode === 'pull-cast' ? 7701 : mode === 'remote-cast' ? 7703 : 7702);
     let strictInside = 0;
     let falseNegatives = 0;
     let fingerError = 0;
@@ -587,7 +617,7 @@ function testControlModeComparison(): void {
       }
     }
 
-    const seeds = Array.from({ length: 8 }, (_, index) => 88000 + index * 17);
+    const seeds = Array.from({ length: QUICK ? 4 : 8 }, (_, index) => 88000 + index * 17);
     const maxRuns = seeds.map((seed) => playRun(seed, () => 275, Math.PI * 1.9, 40, undefined, mode));
     const tightRuns = seeds.map((seed) => playRun(seed, (random) => 70 + random() * 40, Math.PI * 1.4, 22, undefined, mode));
     const average = (runs: RunResult[]) => runs.reduce((sum, run) => sum + run.score, 0) / runs.length;
@@ -611,10 +641,10 @@ function testControlModeComparison(): void {
 
 testPhantomCaptures();
 testZeroSizeInit();
-testStageBudget(0, 400);
-testStageBudget(1, 400);
-testStageBudget(2, 400);
-testStageBudget(3, 400);
+testStageBudget(0, QUICK ? 100 : 400);
+testStageBudget(1, QUICK ? 100 : 400);
+testStageBudget(2, QUICK ? 100 : 400);
+testStageBudget(3, QUICK ? 100 : 400);
 testCaptureCredibility();
 testLoopStrategies();
 testObjectiveReachability();

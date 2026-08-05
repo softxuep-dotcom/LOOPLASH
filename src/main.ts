@@ -21,6 +21,43 @@ if (import.meta.env.DEV) {
       state: () => gameRuntime.getSimulation().context.state
     }
   });
+
+  if (new URLSearchParams(window.location.search).get('scenario') === 'rescue') {
+    const showRescueScenario = (): void => {
+      try {
+        const simulation = gameRuntime.getSimulation();
+        const state = simulation.context.state;
+        state.phase = 'playing';
+        state.previousPhase = 'playing';
+        state.stage = 2;
+        state.biome = 'reef';
+        state.objective = { id: 'rescue', current: 0, target: 5 };
+        state.tutorialStep = 4;
+        state.bannerKey = 'banner.rescue';
+        state.bannerTimer = 2.5;
+        state.spawnTimer = 999;
+        state.enemies = [];
+        state.motes = [];
+        state.projectiles = [];
+        state.player.invulnerable = 999;
+        const bomb = simulation.enemies.spawnNormal('bomb-bloom', {
+          x: state.width * 0.69,
+          y: state.height * 0.36
+        });
+        bomb.speed = 0;
+        for (const point of [
+          { x: state.width * 0.31, y: state.height * 0.36 },
+          { x: state.width * 0.5, y: state.height * 0.53 }
+        ]) {
+          simulation.enemies.spawnMote();
+          Object.assign(state.motes.at(-1)!, point, { vx: 0, vy: 0 });
+        }
+      } catch {
+        window.requestAnimationFrame(showRescueScenario);
+      }
+    };
+    window.requestAnimationFrame(showRescueScenario);
+  }
 }
 
 document.addEventListener('visibilitychange', () => {

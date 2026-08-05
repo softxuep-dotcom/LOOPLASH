@@ -19,16 +19,16 @@ export function requiredStageSupply(target: number): number {
 
 export const STAGES: StageDefinition[] = [
   {
-    biome: 'meadow', objective: 'harvest', target: 12, quota: 15,
-    enemyPool: ['puff', 'needler', 'shellbud', 'bomb-bloom'], bannerKey: 'banner.firstLoop'
+    biome: 'meadow', objective: 'harvest', target: 8, quota: 12,
+    enemyPool: ['puff'], bannerKey: 'banner.firstLoop'
   },
   {
     biome: 'meadow', objective: 'knotbreak', target: 4, quota: 13,
-    enemyPool: ['puff', 'needler', 'shellbud', 'bomb-bloom'], elite: 'knot-knight', bannerKey: 'banner.breakKnots'
+    enemyPool: ['puff', 'needler', 'shellbud'], elite: 'knot-knight', bannerKey: 'banner.breakKnots'
   },
   {
     biome: 'reef', objective: 'rescue', target: 5, quota: 17,
-    enemyPool: ['skipper', 'splitter', 'mirrorling', 'bubble-ray'], elite: 'storm-spool', bannerKey: 'banner.rescue'
+    enemyPool: ['skipper', 'splitter', 'mirrorling', 'bubble-ray', 'bomb-bloom'], elite: 'storm-spool', bannerKey: 'banner.rescue'
   },
   {
     biome: 'reef', objective: 'knotbreak', target: 5, quota: 18,

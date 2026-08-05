@@ -32,6 +32,8 @@ export class GameSimulation {
     state.elapsed += delta;
     state.bannerTimer = Math.max(0, state.bannerTimer - delta);
     if (state.bannerTimer <= 0) state.bannerKey = '';
+    state.patternNoticeTimer = Math.max(0, state.patternNoticeTimer - delta);
+    if (state.patternNoticeTimer <= 0) state.patternNoticeId = null;
     this.loop.update(delta, input);
     if (state.phase === 'playing') {
       this.enemies.update(delta);
@@ -210,6 +212,7 @@ export class GameSimulation {
       activeSeams: [...state.activeSeams],
       patternChoices: [...state.patternChoices],
       ruleChoices: [...state.ruleChoices],
+      patternNoticeId: state.patternNoticeId,
       bannerKey: state.bannerKey,
       tutorialStep: state.tutorialStep,
       controlMode: state.controlMode,

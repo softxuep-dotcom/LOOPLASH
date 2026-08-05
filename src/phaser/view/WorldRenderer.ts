@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { EffectState, EnemyState, GameState } from '../../game/core/types';
 import { NEEDLES } from '../../game/content/needles';
+import { BOMB_EXCLUSION_RADIUS } from '../../game/content/rescueRules';
 import { circleIntersectsSegment, polygonArea } from '../../game/core/math';
 import {
   buildLoopGeometry,
@@ -182,11 +183,36 @@ export class WorldRenderer {
   private drawEnemies(state: GameState): void {
     for (const enemy of state.enemies) {
       const flash = (enemy.flash ?? 0) > 0;
+      if (enemy.type === 'bomb-bloom') {
+        const pulse = state.reducedMotion ? 1 : 1 + Math.sin(state.elapsed * 4.4 + enemy.uid) * 0.045;
+        const dangerRadius = BOMB_EXCLUSION_RADIUS * pulse;
+        this.glow.fillStyle(0xff426f, 0.16).fillCircle(enemy.x, enemy.y, dangerRadius);
+        this.world.fillStyle(0x8f183f, 0.1).fillCircle(enemy.x, enemy.y, dangerRadius);
+        this.world.lineStyle(2.5, 0xff6688, 0.76).strokeCircle(enemy.x, enemy.y, dangerRadius);
+        this.world.lineStyle(3, 0xffd75a, 0.9);
+        for (let index = 0; index < 4; index += 1) {
+          const angle = state.elapsed * 0.18 + index * Math.PI * 0.5;
+          const inner = dangerRadius - 7;
+          const outer = dangerRadius + 5;
+          this.world.lineBetween(
+            enemy.x + Math.cos(angle) * inner,
+            enemy.y + Math.sin(angle) * inner,
+            enemy.x + Math.cos(angle) * outer,
+            enemy.y + Math.sin(angle) * outer
+          );
+        }
+      }
       this.glow.fillStyle(flash ? WHITE : enemy.color, flash ? 0.25 : 0.1).fillCircle(enemy.x, enemy.y, enemy.radius * 1.75);
       if (!this.enemySprites.has(enemy.uid)) {
         if (enemy.behavior === 'boss') this.drawBoss(enemy, state.elapsed);
         else if (enemy.behavior.startsWith('elite')) this.drawElite(enemy, state.elapsed);
         else this.drawCreature(enemy, state.elapsed);
+      }
+      if (state.stage === 0 && state.tutorialStep < 2 && enemy.type === 'puff') {
+        const pulse = state.reducedMotion ? 1 : 1 + Math.sin(state.elapsed * 5 + enemy.uid) * 0.1;
+        const radius = (enemy.radius + 13) * pulse;
+        this.glow.lineStyle(12, 0xffe786, 0.2).strokeCircle(enemy.x, enemy.y, radius);
+        this.world.lineStyle(3, 0xffe786, 0.92).strokeCircle(enemy.x, enemy.y, radius);
       }
       this.drawEnemyHealth(enemy);
     }

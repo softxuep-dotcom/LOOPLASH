@@ -14,9 +14,10 @@ export class ProgressionSystem {
   initializeRun(): void {
     const { state } = this.context;
     const center = state.player.anchor;
-    this.enemies.spawnNormal('puff', { x: center.x - 94, y: center.y - 86 });
-    this.enemies.spawnNormal('puff', { x: center.x, y: center.y - 118 });
-    this.enemies.spawnNormal('puff', { x: center.x + 94, y: center.y - 86 });
+    const layoutScale = Math.min(1, Math.max(0.5, Math.min(state.width, state.height) / 720));
+    this.enemies.spawnNormal('puff', { x: center.x - 94 * layoutScale, y: center.y - 86 * layoutScale });
+    this.enemies.spawnNormal('puff', { x: center.x, y: center.y - 118 * layoutScale });
+    this.enemies.spawnNormal('puff', { x: center.x + 94 * layoutScale, y: center.y - 86 * layoutScale });
     state.spawnedInStage = 3;
   }
 
@@ -39,7 +40,7 @@ export class ProgressionSystem {
     if (state.tutorialStep < 2) return;
     this.spawnForStage(delta);
     const objectiveDone = state.objective.current >= state.objective.target;
-    const onboardingDone = state.stage !== 0 || state.tutorialStep >= 4;
+    const onboardingDone = state.stage !== 0 || state.tutorialStep >= 2;
     if (objectiveDone && onboardingDone) {
       state.stageCompleteTimer += delta;
       if (state.stageCompleteTimer >= 0.85) this.offerPattern();
@@ -54,6 +55,8 @@ export class ProgressionSystem {
     const emptyIndex = state.player.patternSlots.findIndex((slot) => slot === null);
     const targetIndex = emptyIndex >= 0 ? emptyIndex : state.stage % state.player.patternSlots.length;
     state.player.patternSlots[targetIndex] = patternId;
+    state.patternNoticeId = patternId;
+    state.patternNoticeTimer = 2.4;
     state.patternChoices = [];
     if (state.awaitingRuleAfterPattern) {
       state.ruleChoices = this.context.random.shuffle(WORLD_RULES).slice(0, 3).map((rule) => rule.id);
@@ -113,7 +116,9 @@ export class ProgressionSystem {
       this.enemies.spawnNormal(this.context.random.pick(stage.enemyPool));
       state.spawnedInStage += 1;
     }
-    state.spawnTimer = this.context.random.range(0.72, 1.22) / Math.max(1, world.enemySpeed * 0.8);
+    const earlyBreathingRoom = state.stage === 0 ? 1.25 : state.controlMode === 'remote-cast' ? 1.18 : 1;
+    state.spawnTimer = this.context.random.range(0.72, 1.22) * earlyBreathingRoom
+      / Math.max(1, world.enemySpeed * 0.8);
   }
 
   /**
@@ -123,15 +128,7 @@ export class ProgressionSystem {
    */
   private tutorialEnemyType(): 'puff' | 'needler' | 'shellbud' | null {
     const state = this.context.state;
-    if (state.stage !== 0 || state.tutorialStep >= 4) return null;
-    if (state.tutorialStep <= 1) return 'puff';
-    if (state.tutorialStep === 2) {
-      const hasParryLesson = state.enemies.some((enemy) => enemy.type === 'needler' && !enemy.dead)
-        || state.projectiles.some((projectile) => !projectile.captured && projectile.life > 0);
-      return hasParryLesson ? 'puff' : 'needler';
-    }
-    const hasArmorLesson = state.enemies.some((enemy) => enemy.type === 'shellbud' && !enemy.dead);
-    return hasArmorLesson ? 'puff' : 'shellbud';
+    return state.stage === 0 ? 'puff' : null;
   }
 
   private offerPattern(): void {
@@ -140,7 +137,10 @@ export class ProgressionSystem {
     const equipped = new Set(state.player.patternSlots.filter((slot): slot is string => slot !== null));
     let pool = PATTERNS.filter((pattern) => !equipped.has(pattern.id));
     if (pool.length < 3) pool = PATTERNS;
-    state.patternChoices = this.context.random.shuffle(pool).slice(0, 3).map((pattern) => pattern.id);
+    const starterChoices = ['flare-knot', 'wide-wake', 'patchwork'];
+    state.patternChoices = state.stage === 0
+      ? starterChoices
+      : this.context.random.shuffle(pool).slice(0, 3).map((pattern) => pattern.id);
     state.awaitingRuleAfterPattern = STAGES[state.stage + 1]?.biome !== STAGES[state.stage]?.biome;
     state.previousPhase = state.phase;
     state.phase = 'pattern-choice';
@@ -168,6 +168,9 @@ export class ProgressionSystem {
     state.enemies = [];
     state.projectiles = [];
     state.motes = [];
+    state.player.shield = 2;
+    state.player.hearts = Math.min(state.player.maxHearts, state.player.hearts + 1);
+    state.player.invulnerable = Math.max(state.player.invulnerable, 1.1);
     state.previousPhase = state.phase;
     state.phase = 'playing';
     this.context.banner(nextStage.bannerKey, nextStage.boss ? 3.6 : 2.5);

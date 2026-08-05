@@ -15,7 +15,7 @@ export type GamePhase =
 export type BiomeId = 'meadow' | 'reef';
 export type ObjectiveId = 'harvest' | 'rescue' | 'knotbreak';
 export type NeedleId = 'dawn' | 'twin' | 'moon';
-export type ControlMode = 'drag-anchor' | 'pull-cast';
+export type ControlMode = 'drag-anchor' | 'pull-cast' | 'remote-cast';
 export type PatternFamily = 'ember' | 'tide' | 'seed' | 'prism';
 export type Essence = PatternFamily | 'wild';
 
@@ -238,6 +238,8 @@ export interface GameState {
   activeSeams: string[];
   patternChoices: string[];
   ruleChoices: string[];
+  patternNoticeId: string | null;
+  patternNoticeTimer: number;
   tutorialStep: number;
   bannerKey: string;
   bannerTimer: number;
@@ -292,6 +294,7 @@ export interface RuntimeSnapshot {
   activeSeams: string[];
   patternChoices: string[];
   ruleChoices: string[];
+  patternNoticeId: string | null;
   bannerKey: string;
   tutorialStep: number;
   controlMode: ControlMode;

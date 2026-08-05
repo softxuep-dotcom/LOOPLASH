@@ -2,6 +2,7 @@ import type { EliteId, EnemyId, EnemyState, Vec2 } from '../../core/types';
 import { angleVector, clamp, distance, normalize } from '../../core/math';
 import { ENEMIES } from '../../content/enemies';
 import { ELITES } from '../../content/elites';
+import { BOMB_MOTE_MIN_DISTANCE } from '../../content/rescueRules';
 import { getWorldModifiers } from './BuildSystem';
 import type { SimulationContext } from '../SimulationContext';
 
@@ -14,7 +15,7 @@ export class EnemySystem {
     const state = this.context.state;
     const definition = ENEMIES[type];
     const world = getWorldModifiers(state);
-    const point = position ?? this.edgeSpawnPoint();
+    const point = position ?? (type === 'bomb-bloom' ? this.safeEdgeSpawnPoint(state.motes) : this.edgeSpawnPoint());
     const enemy: EnemyState = {
       uid: this.context.nextUid(),
       type,
@@ -111,10 +112,12 @@ export class EnemySystem {
       enemy.x = clamp(enemy.x, 24, state.width - 24);
       enemy.y = clamp(enemy.y, 52, state.height - 24);
       if (distance(enemy, player.anchor) < enemy.radius + 17) {
-        hurtPlayer(this.context, 1, enemy.x, enemy.y);
         const away = normalize({ x: enemy.x - player.anchor.x, y: enemy.y - player.anchor.y });
-        enemy.x += away.x * 44;
-        enemy.y += away.y * 44;
+        // The opening room teaches only the capture verb. Contact still bumps
+        // visibly, but cannot erase the run before the first power choice.
+        if (state.stage > 0) hurtPlayer(this.context, 1, enemy.x, enemy.y);
+        enemy.x += away.x * (state.stage === 0 ? 72 : 44);
+        enemy.y += away.y * (state.stage === 0 ? 72 : 44);
       }
     }
 
@@ -140,12 +143,15 @@ export class EnemySystem {
       mote.y = clamp(mote.y, 70, state.height - 40);
     }
 
+    if (state.objective.id === 'rescue') this.maintainRescueClearance();
+
     state.enemies = state.enemies.filter((enemy) => !enemy.dead);
     state.projectiles = state.projectiles.filter((projectile) => projectile.life > 0 && !projectile.captured);
   }
 
   spawnMote(): void {
-    const point = this.edgeSpawnPoint();
+    const bombs = this.context.state.enemies.filter((enemy) => !enemy.dead && enemy.type === 'bomb-bloom');
+    const point = this.safeEdgeSpawnPoint(bombs);
     this.context.state.motes.push({
       uid: this.context.nextUid(),
       x: point.x,
@@ -154,6 +160,49 @@ export class EnemySystem {
       vy: this.context.random.range(-12, 12),
       radius: 13
     });
+  }
+
+  private maintainRescueClearance(): void {
+    const state = this.context.state;
+    const bombs = state.enemies.filter((enemy) => !enemy.dead && enemy.type === 'bomb-bloom');
+    if (bombs.length === 0 || state.motes.length === 0) return;
+
+    // A few projection passes handle one bomb near several motes without
+    // teleporting it across the arena. This is a gameplay affordance: every
+    // mote must have room for one plain circular loop outside the red zone.
+    for (let pass = 0; pass < 8; pass += 1) {
+      let adjusted = false;
+      for (const bomb of bombs) {
+        for (const mote of state.motes) {
+          let dx = bomb.x - mote.x;
+          let dy = bomb.y - mote.y;
+          let separation = Math.hypot(dx, dy);
+          if (separation >= BOMB_MOTE_MIN_DISTANCE - 0.01) continue;
+
+          if (separation < 0.001) {
+            dx = state.width * 0.5 - bomb.x;
+            dy = state.height * 0.5 - bomb.y;
+            separation = Math.hypot(dx, dy);
+            if (separation < 0.001) {
+              const angle = ((bomb.uid * 13 + mote.uid * 7) % 32) / 32 * Math.PI * 2;
+              dx = Math.cos(angle);
+              dy = Math.sin(angle);
+              separation = 1;
+            }
+          }
+
+          const direction = { x: dx / separation, y: dy / separation };
+          const overlap = BOMB_MOTE_MIN_DISTANCE - Math.hypot(bomb.x - mote.x, bomb.y - mote.y) + 0.02;
+          const bombShare = overlap * 0.72;
+          bomb.x = clamp(bomb.x + direction.x * bombShare, 24, state.width - 24);
+          bomb.y = clamp(bomb.y + direction.y * bombShare, 52, state.height - 24);
+          mote.x = clamp(mote.x - direction.x * (overlap - bombShare), 40, state.width - 40);
+          mote.y = clamp(mote.y - direction.y * (overlap - bombShare), 70, state.height - 40);
+          adjusted = true;
+        }
+      }
+      if (!adjusted) break;
+    }
   }
 
   private updateEnemy(enemy: EnemyState, delta: number): void {
@@ -172,6 +221,7 @@ export class EnemySystem {
     const toward = normalize({ x: target.x - enemy.x, y: target.y - enemy.y });
     const tangent = { x: -toward.y, y: toward.x };
     let speed = enemy.speed;
+    if (state.controlMode === 'remote-cast') speed *= state.stage === 1 ? 0.72 : 0.82;
 
     if (enemy.behavior === 'skip') {
       speed *= enemy.cooldown < 0.24 ? 4.2 : 0.42;
@@ -242,7 +292,8 @@ export class EnemySystem {
     const state = this.context.state;
     const world = getWorldModifiers(state);
     const angle = (explicitAngle ?? Math.atan2(state.player.anchor.y - enemy.y, state.player.anchor.x - enemy.x)) + angleOffset;
-    const velocity = angleVector(angle, 210 * speedFactor * world.projectileSpeed);
+    const fixedDefenseScale = state.controlMode === 'remote-cast' ? 0.78 : 1;
+    const velocity = angleVector(angle, 210 * speedFactor * world.projectileSpeed * fixedDefenseScale);
     state.projectiles.push({
       uid: this.context.nextUid(),
       x: enemy.x,
@@ -288,17 +339,41 @@ export class EnemySystem {
     if (edge === 2) return { x: this.context.random.range(EDGE_PADDING, state.width - EDGE_PADDING), y: state.height - EDGE_PADDING };
     return { x: EDGE_PADDING, y: this.context.random.range(90, state.height - EDGE_PADDING) };
   }
+
+  private safeEdgeSpawnPoint(hazards: Vec2[]): Vec2 {
+    let best = this.edgeSpawnPoint();
+    let bestClearance = hazards.length === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.min(...hazards.map((hazard) => distance(best, hazard)));
+    for (let attempt = 0; attempt < 11 && bestClearance < BOMB_MOTE_MIN_DISTANCE; attempt += 1) {
+      const candidate = this.edgeSpawnPoint();
+      const clearance = hazards.length === 0
+        ? Number.POSITIVE_INFINITY
+        : Math.min(...hazards.map((hazard) => distance(candidate, hazard)));
+      if (clearance > bestClearance) {
+        best = candidate;
+        bestClearance = clearance;
+      }
+    }
+    return best;
+  }
 }
 
 export function hurtPlayer(context: SimulationContext, amount: number, x: number, y: number): void {
   const { state } = context;
   const player = state.player;
   if (state.phase !== 'playing' || player.invulnerable > 0 || player.pull) return;
-  const interruptDrawing = player.drawing && state.controlMode === 'pull-cast';
+  const interruptDrawing = player.drawing && state.controlMode !== 'drag-anchor';
   if (player.shield > 0) {
     player.shield -= 1;
     player.invulnerable = 0.65;
     context.effect({ type: 'shield', x: player.anchor.x, y: player.anchor.y, radius: 44, color: 0x9fd8ff, life: 0.45 });
+    if (interruptDrawing) player.pendingWeakSnap = true;
+    return;
+  }
+  if (state.stage === 1 && state.tutorialStep < 4) {
+    player.invulnerable = 0.85;
+    context.effect({ type: 'hit', x, y, radius: 48, color: 0xffd75a, life: 0.4 });
     if (interruptDrawing) player.pendingWeakSnap = true;
     return;
   }

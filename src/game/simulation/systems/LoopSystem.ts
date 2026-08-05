@@ -24,8 +24,10 @@ import {
 import { evaluateLoopQuality } from '../loopScoring';
 import {
   clampLandingPoint,
-  poleOfInaccessibility,
-  polylineLength
+  landingHazardClearance,
+  type LandingHazard,
+  polylineLength,
+  safeLandingPoint
 } from '../landingGeometry';
 
 /** Time constant for dissolving the touch-down grab offset. */
@@ -93,7 +95,7 @@ export class LoopSystem {
     player.tension = 0;
     player.landingTarget = null;
 
-    if (state.controlMode === 'pull-cast') {
+    if (state.controlMode !== 'drag-anchor') {
       const target = input.pointer ? this.clampPointer(input.pointer) : this.keyboardTarget(input);
       // Outside recovery, remote casting is deliberately one-to-one. During
       // soft recovery the next stroke starts at the visible needle and catches
@@ -137,7 +139,7 @@ export class LoopSystem {
 
   private updateDrawing(delta: number, input: InputFrame): void {
     const state = this.context.state;
-    if (state.controlMode === 'pull-cast') {
+    if (state.controlMode !== 'drag-anchor') {
       this.updateRemoteDrawing(delta, input);
       return;
     }
@@ -212,9 +214,13 @@ export class LoopSystem {
       }
     }
 
-    if (addedPoint && player.path.length >= 3) this.refreshRemoteLanding(6);
+    if (state.controlMode === 'pull-cast' && addedPoint && player.path.length >= 3) {
+      this.refreshRemoteLanding(6);
+    }
     const geometry = buildLoopGeometry(state);
-    const landing = player.landingTarget ?? player.needle;
+    const landing = state.controlMode === 'pull-cast'
+      ? (player.landingTarget ?? player.needle)
+      : player.needle;
     const reach = Math.max(1, needleMaxLength(state));
     const travel = distance(player.anchor, landing) / reach;
     const stroke = polylineLength(geometry.sampled) / (reach * 2.6);
@@ -226,9 +232,10 @@ export class LoopSystem {
     // to loadout. The squared stroke term is the hard answer to large-loop
     // dominance: doubling circumference costs roughly four times as much.
     const needleRate = 1 + (needle.tensionRate - 1) * 0.35;
+    const onboardingRate = state.stage === 0 ? 0.58 : 1;
     player.tension = clamp(
       (travel * 0.28 + stroke * stroke * 0.5)
-        * needleRate * patterns.tensionRate * world.tensionRate,
+        * needleRate * patterns.tensionRate * world.tensionRate * onboardingRate,
       0,
       1.06
     );
@@ -242,11 +249,55 @@ export class LoopSystem {
       state.player.landingTarget = null;
       return null;
     }
-    const pole = poleOfInaccessibility(geometry.polygon, precision);
-    state.player.landingTarget = pole
-      ? clampLandingPoint(pole, state.width, state.height)
-      : null;
+    const hazards = this.landingHazards(geometry);
+    const safePoint = safeLandingPoint(geometry.polygon, hazards, state.width, state.height, precision);
+    if (!safePoint) {
+      state.player.landingTarget = null;
+      return null;
+    }
+    const destinationClearance = landingHazardClearance(safePoint, hazards);
+    const currentClearance = landingHazardClearance(state.player.anchor, hazards);
+    // If the whole loop is occupied, staying put is preferable to an automatic
+    // suicide move. This is also previewed: the ghost remains on the player.
+    state.player.landingTarget = destinationClearance < 0 && currentClearance > destinationClearance
+      ? clampLandingPoint(state.player.anchor, state.width, state.height)
+      : safePoint;
     return state.player.landingTarget;
+  }
+
+  private landingHazards(geometry: ReturnType<typeof buildLoopGeometry>): LandingHazard[] {
+    const state = this.context.state;
+    const player = state.player;
+    const needle = NEEDLES[player.needleId];
+    const modifiers = getPatternModifiers(state);
+    const chordHits = needle.baseChordRepeats + Math.round(modifiers.chordRepeats) + 1;
+    const hazards: LandingHazard[] = [];
+    for (const enemy of state.enemies) {
+      if (enemy.dead) continue;
+      const inside = isEnemyInsideLoop(enemy, geometry);
+      const chordHit = circleIntersectsSegment(
+        enemy,
+        enemy.radius * 0.72 + 6,
+        geometry.chordStart,
+        geometry.chordEnd
+      );
+      const armorAfterSnap = Math.max(0, enemy.armor - (chordHit ? chordHits : 0));
+      const normalCaptured = inside
+        && enemy.type !== 'bomb-bloom'
+        && !enemy.behavior.startsWith('elite')
+        && enemy.behavior !== 'boss'
+        && armorAfterSnap <= 0;
+      const bombConsumed = inside && enemy.type === 'bomb-bloom';
+      if (normalCaptured || bombConsumed) continue;
+      const padding = enemy.type === 'bomb-bloom' ? 62
+        : enemy.behavior.startsWith('elite') || enemy.behavior === 'boss' ? 44 : 32;
+      hazards.push({ x: enemy.x, y: enemy.y, radius: enemy.radius + padding });
+    }
+    for (const shot of state.projectiles) {
+      if (shot.captured || shot.life <= 0) continue;
+      hazards.push({ x: shot.x, y: shot.y, radius: shot.radius + 34 });
+    }
+    return hazards;
   }
 
   private clampPointer(point: Vec2): Vec2 {
@@ -293,8 +344,8 @@ export class LoopSystem {
     const chordStart = geometry.chordStart;
     const chordEnd = geometry.chordEnd;
     const valid = area >= MIN_LOOP_AREA && sampled.length >= 4;
-    const remote = state.controlMode === 'pull-cast';
-    const destination = remote && valid
+    const remote = state.controlMode !== 'drag-anchor';
+    const destination = state.controlMode === 'pull-cast' && valid
       ? (this.refreshRemoteLanding(1.5) ?? { ...player.anchor })
       : { ...player.anchor };
     const forced = reason !== 'release';
@@ -399,7 +450,15 @@ export class LoopSystem {
 
     if (state.objective.id === 'harvest') state.objective.current += captures;
     if (state.objective.id === 'knotbreak') state.objective.current += brokenKnots;
-    if (brokenKnots > 0) state.tutorialStep = Math.max(state.tutorialStep, 4);
+    if (brokenKnots > 0) {
+      const completedArmorLesson = state.stage === 1 && state.tutorialStep < 4;
+      state.tutorialStep = Math.max(state.tutorialStep, 4);
+      if (completedArmorLesson) {
+        player.shield = 2;
+        player.invulnerable = Math.max(player.invulnerable, 1.1);
+        this.context.effect({ type: 'shield', x: player.anchor.x, y: player.anchor.y, radius: 54, color: 0xffd75a, life: 0.62 });
+      }
+    }
 
     const shotsAtSnap = player.capturedShots;
     if (shotsAtSnap > 0) {
@@ -432,7 +491,11 @@ export class LoopSystem {
         * modifiers.scoreMultiplier * world.scoreMultiplier;
       player.score += Math.round(points);
       player.totalCaptures += captures;
-      if (modifiers.tightShield > 0 && area < 12000 && captures > 0) player.shield = Math.min(2, player.shield + modifiers.tightShield);
+      if (state.controlMode === 'remote-cast' && player.combo % 4 === 0 && player.shield < 2) {
+        player.shield += 1;
+        this.context.effect({ type: 'shield', x: player.anchor.x, y: player.anchor.y, radius: 46, color: 0x9fd8ff, life: 0.52 });
+      }
+      if (modifiers.tightShield > 0 && area < 18000 && captures > 0) player.shield = Math.min(2, player.shield + modifiers.tightShield);
       if (modifiers.healEvery > 0 && player.totalCaptures > 0 && player.totalCaptures % Math.round(modifiers.healEvery) < captures) {
         player.hearts = Math.min(player.maxHearts, player.hearts + 1);
         this.context.effect({ type: 'heal', x: player.anchor.x, y: player.anchor.y, radius: 48, color: 0xa8f096, life: 0.6 });
@@ -529,7 +592,12 @@ export class LoopSystem {
     player.anchor.y = lerp(pull.start.y, pull.end.y, eased);
     player.needle.x += player.anchor.x - before.x;
     player.needle.y += player.anchor.y - before.y;
-    if (linear >= 1) player.pull = null;
+    if (linear >= 1) {
+      player.pull = null;
+      // Arrival grace prevents a safe preview becoming unavoidable damage in
+      // the single enemy-update that follows the pull's final frame.
+      player.invulnerable = Math.max(player.invulnerable, 0.55);
+    }
   }
 
   private applySnapBlast(center: Vec2, radius: number, damage: number): void {

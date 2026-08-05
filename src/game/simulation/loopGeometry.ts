@@ -46,7 +46,7 @@ export function buildLoopGeometry(state: GameState): LoopGeometry {
     PATH_SAMPLE_DISTANCE,
     MAX_PATH_POINTS
   );
-  const remote = state.controlMode === 'pull-cast';
+  const remote = state.controlMode !== 'drag-anchor';
   const chordStart = { ...(sampled.at(-1) ?? state.player.needle) };
   const chordEnd = remote
     ? { ...(sampled[0] ?? state.player.needle) }

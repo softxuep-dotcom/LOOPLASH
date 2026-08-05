@@ -134,3 +134,93 @@ export function polylineLength(points: Vec2[]): number {
   }
   return total;
 }
+
+export interface LandingHazard extends Vec2 {
+  /** Already includes the desired personal-space padding. */
+  radius: number;
+}
+
+export function landingHazardClearance(point: Vec2, hazards: LandingHazard[]): number {
+  if (hazards.length === 0) return Infinity;
+  return Math.min(...hazards.map((hazard) =>
+    Math.hypot(point.x - hazard.x, point.y - hazard.y) - hazard.radius));
+}
+
+function polygonClearance(point: Vec2, polygon: Vec2[]): number {
+  let clearance = Infinity;
+  for (let index = 0; index < polygon.length; index += 1) {
+    const start = polygon[index];
+    const end = polygon[(index + 1) % polygon.length];
+    if (start && end) clearance = Math.min(clearance, distancePointToSegment(point, start, end));
+  }
+  return clearance;
+}
+
+/**
+ * Starts from the geometric pole, then searches the valid interior for a point
+ * with actual clearance from surviving enemies, bombs and shots. Geometry is
+ * still authoritative: every candidate must be inside the player's stroke and
+ * inside the same arena bounds used by movement.
+ */
+export function safeLandingPoint(
+  polygon: Vec2[],
+  hazards: LandingHazard[],
+  width: number,
+  height: number,
+  precision = 4
+): Vec2 | null {
+  const pole = poleOfInaccessibility(polygon, precision);
+  if (!pole) return null;
+  if (hazards.length === 0) return clampLandingPoint(pole, width, height);
+  const clampedPole = clampLandingPoint(pole, width, height);
+  // Most strokes already have a safe geometric pole. The risk-aware grid is
+  // reserved for genuinely occupied landings, keeping live preview cheap.
+  if (pointInPolygon(clampedPole, polygon) && landingHazardClearance(clampedPole, hazards) >= 18) {
+    return clampedPole;
+  }
+
+  const safeMinX = 30;
+  const safeMinY = 70;
+  const safeMaxX = Math.max(safeMinX, width - 30);
+  const safeMaxY = Math.max(safeMinY, height - 30);
+  const minX = Math.max(safeMinX, Math.min(...polygon.map((point) => point.x)));
+  const minY = Math.max(safeMinY, Math.min(...polygon.map((point) => point.y)));
+  const maxX = Math.min(safeMaxX, Math.max(...polygon.map((point) => point.x)));
+  const maxY = Math.min(safeMaxY, Math.max(...polygon.map((point) => point.y)));
+  if (maxX < minX || maxY < minY) return clampedPole;
+
+  const score = (point: Vec2): number => {
+    if (!pointInPolygon(point, polygon)) return -Infinity;
+    const hazard = Math.min(150, landingHazardClearance(point, hazards));
+    const edge = Math.min(70, polygonClearance(point, polygon));
+    return hazard * 2.2 + edge * 0.65 - Math.hypot(point.x - pole.x, point.y - pole.y) * 0.04;
+  };
+
+  let best: Vec2 | null = null;
+  let bestScore = -Infinity;
+  const consider = (point: Vec2): void => {
+    if (point.x < safeMinX || point.x > safeMaxX || point.y < safeMinY || point.y > safeMaxY) return;
+    const candidateScore = score(point);
+    if (candidateScore <= bestScore) return;
+    best = { ...point };
+    bestScore = candidateScore;
+  };
+  consider(pole);
+
+  const livePreview = precision >= 5;
+  const gridDivisions = livePreview ? 3 : 8;
+  let step = Math.max(precision * 2, Math.min(maxX - minX, maxY - minY) / gridDivisions);
+  if (!Number.isFinite(step) || step <= 0) return best ?? clampedPole;
+  for (let x = minX; x <= maxX; x += step) {
+    for (let y = minY; y <= maxY; y += step) consider({ x, y });
+  }
+  const refinementPasses = livePreview ? 1 : 4;
+  for (let pass = 0; pass < refinementPasses && best; pass += 1) {
+    step *= 0.5;
+    const center = { ...(best as Vec2) };
+    for (const dx of [-step, 0, step]) {
+      for (const dy of [-step, 0, step]) consider({ x: center.x + dx, y: center.y + dy });
+    }
+  }
+  return best ?? clampedPole;
+}

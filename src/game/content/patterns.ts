@@ -17,23 +17,23 @@ export const DEFAULT_PATTERN_MODIFIERS: PatternModifiers = {
 
 export const PATTERNS: PatternDefinition[] = [
   { id: 'backstitch', nameKey: 'pattern.backstitch.name', descriptionKey: 'pattern.backstitch.description', family: 'ember', glyph: '↯', color: 0xff6b62, modifiers: { chordRepeats: 1 } },
-  { id: 'ember-edge', nameKey: 'pattern.emberEdge.name', descriptionKey: 'pattern.emberEdge.description', family: 'ember', glyph: '△', color: 0xff8065, modifiers: { chordDamage: 0.7 } },
-  { id: 'flare-knot', nameKey: 'pattern.flareKnot.name', descriptionKey: 'pattern.flareKnot.description', family: 'ember', glyph: '✹', color: 0xffaa50, modifiers: { snapBlast: 42 } },
-  { id: 'hot-flow', nameKey: 'pattern.hotFlow.name', descriptionKey: 'pattern.hotFlow.description', family: 'ember', glyph: '⌁', color: 0xffca64, modifiers: { flowGrace: 0.45 } },
+  { id: 'ember-edge', nameKey: 'pattern.emberEdge.name', descriptionKey: 'pattern.emberEdge.description', family: 'ember', glyph: '△', color: 0xff8065, modifiers: { chordDamage: 0.9 } },
+  { id: 'flare-knot', nameKey: 'pattern.flareKnot.name', descriptionKey: 'pattern.flareKnot.description', family: 'ember', glyph: '✹', color: 0xffaa50, modifiers: { snapBlast: 110 } },
+  { id: 'hot-flow', nameKey: 'pattern.hotFlow.name', descriptionKey: 'pattern.hotFlow.description', family: 'ember', glyph: '⌁', color: 0xffca64, modifiers: { flowGrace: 0.75 } },
 
-  { id: 'undertow', nameKey: 'pattern.undertow.name', descriptionKey: 'pattern.undertow.description', family: 'tide', glyph: '≋', color: 0x54cfe0, modifiers: { anchorPull: 0.18 } },
-  { id: 'soft-spool', nameKey: 'pattern.softSpool.name', descriptionKey: 'pattern.softSpool.description', family: 'tide', glyph: '◌', color: 0x73d9f0, modifiers: { tensionRate: -0.12 } },
-  { id: 'wide-wake', nameKey: 'pattern.wideWake.name', descriptionKey: 'pattern.wideWake.description', family: 'tide', glyph: '◯', color: 0x82bfff, modifiers: { captureTolerance: 0.14 } },
-  { id: 'tide-score', nameKey: 'pattern.tideScore.name', descriptionKey: 'pattern.tideScore.description', family: 'tide', glyph: '≈', color: 0x659cff, modifiers: { scoreMultiplier: 0.12 } },
+  { id: 'undertow', nameKey: 'pattern.undertow.name', descriptionKey: 'pattern.undertow.description', family: 'tide', glyph: '≋', color: 0x54cfe0, modifiers: { anchorPull: 0.32 } },
+  { id: 'soft-spool', nameKey: 'pattern.softSpool.name', descriptionKey: 'pattern.softSpool.description', family: 'tide', glyph: '◌', color: 0x73d9f0, modifiers: { tensionRate: -0.18 } },
+  { id: 'wide-wake', nameKey: 'pattern.wideWake.name', descriptionKey: 'pattern.wideWake.description', family: 'tide', glyph: '◯', color: 0x82bfff, modifiers: { captureTolerance: 0.22 } },
+  { id: 'tide-score', nameKey: 'pattern.tideScore.name', descriptionKey: 'pattern.tideScore.description', family: 'tide', glyph: '≈', color: 0x659cff, modifiers: { scoreMultiplier: 0.18 } },
 
   { id: 'patchwork', nameKey: 'pattern.patchwork.name', descriptionKey: 'pattern.patchwork.description', family: 'seed', glyph: '⬡', color: 0x81d879, modifiers: { tightShield: 1 } },
-  { id: 'starbud', nameKey: 'pattern.starbud.name', descriptionKey: 'pattern.starbud.description', family: 'seed', glyph: '❋', color: 0xa4e078, modifiers: { healEvery: 10 } },
-  { id: 'seed-burst', nameKey: 'pattern.seedBurst.name', descriptionKey: 'pattern.seedBurst.description', family: 'seed', glyph: '✤', color: 0xc3e67c, modifiers: { snapBlast: 26 } },
-  { id: 'green-flow', nameKey: 'pattern.greenFlow.name', descriptionKey: 'pattern.greenFlow.description', family: 'seed', glyph: '♧', color: 0x71d69f, modifiers: { flowGrace: 0.3 } },
+  { id: 'starbud', nameKey: 'pattern.starbud.name', descriptionKey: 'pattern.starbud.description', family: 'seed', glyph: '❋', color: 0xa4e078, modifiers: { healEvery: 8 } },
+  { id: 'seed-burst', nameKey: 'pattern.seedBurst.name', descriptionKey: 'pattern.seedBurst.description', family: 'seed', glyph: '✤', color: 0xc3e67c, modifiers: { snapBlast: 82 } },
+  { id: 'green-flow', nameKey: 'pattern.greenFlow.name', descriptionKey: 'pattern.greenFlow.description', family: 'seed', glyph: '♧', color: 0x71d69f, modifiers: { flowGrace: 0.55 } },
 
   { id: 'splitglass', nameKey: 'pattern.splitglass.name', descriptionKey: 'pattern.splitglass.description', family: 'prism', glyph: '◇', color: 0xb99cff, modifiers: { reflectedPower: 0.8 } },
   { id: 'prism-guard', nameKey: 'pattern.prismGuard.name', descriptionKey: 'pattern.prismGuard.description', family: 'prism', glyph: '◈', color: 0xa996ff, modifiers: { projectileCapacity: 2 } },
-  { id: 'facet', nameKey: 'pattern.facet.name', descriptionKey: 'pattern.facet.description', family: 'prism', glyph: '⌑', color: 0xd09cff, modifiers: { chordDamage: 0.55, captureTolerance: 0.06 } }
+  { id: 'facet', nameKey: 'pattern.facet.name', descriptionKey: 'pattern.facet.description', family: 'prism', glyph: '⌑', color: 0xd09cff, modifiers: { chordDamage: 0.7, captureTolerance: 0.1 } }
 ];
 
 export const PATTERN_BY_ID = Object.fromEntries(PATTERNS.map((pattern) => [pattern.id, pattern])) as Record<string, PatternDefinition>;
