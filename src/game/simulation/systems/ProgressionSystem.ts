@@ -39,7 +39,8 @@ export class ProgressionSystem {
     if (state.tutorialStep < 2) return;
     this.spawnForStage(delta);
     const objectiveDone = state.objective.current >= state.objective.target;
-    if (objectiveDone) {
+    const onboardingDone = state.stage !== 0 || state.tutorialStep >= 4;
+    if (objectiveDone && onboardingDone) {
       state.stageCompleteTimer += delta;
       if (state.stageCompleteTimer >= 0.85) this.offerPattern();
     } else {
@@ -78,7 +79,9 @@ export class ProgressionSystem {
     const world = getWorldModifiers(state);
     state.spawnTimer -= delta;
     const aliveLimit = Math.min(18, Math.round(10 * world.spawnCount));
-    if (state.objective.current >= state.objective.target || state.spawnTimer > 0 || state.enemies.length >= aliveLimit) return;
+    const onboardingPending = state.stage === 0 && state.tutorialStep < 4;
+    if ((!onboardingPending && state.objective.current >= state.objective.target)
+      || state.spawnTimer > 0 || state.enemies.length >= aliveLimit) return;
 
     const replenishing = state.spawnedInStage >= state.stageQuota;
     const requiredSupply = requiredStageSupply(stage.target);
@@ -88,9 +91,11 @@ export class ProgressionSystem {
       this.enemies.spawnMote();
     }
 
-    let enemyType = this.context.random.pick(stage.enemyPool);
+    let enemyType = this.tutorialEnemyType() ?? this.context.random.pick(stage.enemyPool);
     if (stage.objective === 'harvest' && replenishing) {
-      enemyType = stage.enemyPool.find((type) => type !== 'bomb-bloom') ?? enemyType;
+      enemyType = this.tutorialEnemyType()
+        ?? stage.enemyPool.find((type) => type !== 'bomb-bloom')
+        ?? enemyType;
     }
     if (stage.objective === 'knotbreak' && (replenishing || state.spawnedInStage % 3 === 0)) {
       enemyType = stage.biome === 'meadow' ? 'shellbud' : 'bubble-ray';
@@ -109,6 +114,24 @@ export class ProgressionSystem {
       state.spawnedInStage += 1;
     }
     state.spawnTimer = this.context.random.range(0.72, 1.22) / Math.max(1, world.enemySpeed * 0.8);
+  }
+
+  /**
+   * Stage one teaches one verb at a time. Armored flowers and bombs used to
+   * enter the random pool before their counterplay was explained, which made
+   * shellbuds look invulnerable and bomb damage look arbitrary.
+   */
+  private tutorialEnemyType(): 'puff' | 'needler' | 'shellbud' | null {
+    const state = this.context.state;
+    if (state.stage !== 0 || state.tutorialStep >= 4) return null;
+    if (state.tutorialStep <= 1) return 'puff';
+    if (state.tutorialStep === 2) {
+      const hasParryLesson = state.enemies.some((enemy) => enemy.type === 'needler' && !enemy.dead)
+        || state.projectiles.some((projectile) => !projectile.captured && projectile.life > 0);
+      return hasParryLesson ? 'puff' : 'needler';
+    }
+    const hasArmorLesson = state.enemies.some((enemy) => enemy.type === 'shellbud' && !enemy.dead);
+    return hasArmorLesson ? 'puff' : 'shellbud';
   }
 
   private offerPattern(): void {

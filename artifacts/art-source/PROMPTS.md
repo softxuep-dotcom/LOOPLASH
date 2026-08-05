@@ -59,3 +59,21 @@ forms, seamless-feeling floor, no horizon. No creatures, characters, UI, text, l
 frames, or high-contrast objects in either centre.
 ```
 
+## Player and needles
+
+```text
+Use the meadow creature sheet as a style reference only. Create one exact 2×2 equal-cell
+top-down 2D player and weapon sprite sheet on a perfectly flat solid #00ff00 chroma-key
+background. Top-left: Loomheart player anchor, a compact circular navy-and-cream magical
+thread spool familiar with a bright golden star core and two small rosy leaf fins, heroic,
+friendly, and symmetrical. Top-right: Dawn Needle, an elegant compact golden sewing shuttle
+with a sharp triangular point, small sun gem, and cream thread detail, pointing exactly right.
+Bottom-left: Twin Needle, a compact coral-pink double-pronged sewing shuttle with a central
+rose gem and visibly two tips, pointing exactly right. Bottom-right: Moon Shuttle, a pale
+icy-blue crescent sewing shuttle with a moon gem and one sharp tip, pointing exactly right.
+Polished hand-painted plush botanical fantasy, warm highlights, bold silhouettes, soft cel
+shading, top-down 3/4 game view, readable at 32–48 px. One isolated subject centred in each
+cell with generous equal padding; all needles use comparable visible length. Uniform green
+background only: no shadows, gradients, texture, reflections, floor, green subject colors,
+text, labels, borders, grid lines, UI, scenery, particles, extra objects, logos, or watermark.
+```

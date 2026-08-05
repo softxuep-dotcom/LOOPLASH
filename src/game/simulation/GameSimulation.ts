@@ -1,9 +1,11 @@
 import type { InputFrame, NeedleId, RuntimeSnapshot } from '../core/types';
+import { NEEDLES } from '../content/needles';
 import { createInitialState } from './state';
 import { SimulationContext } from './SimulationContext';
 import { EnemySystem } from './systems/EnemySystem';
 import { LoopSystem } from './systems/LoopSystem';
 import { ProgressionSystem } from './systems/ProgressionSystem';
+import { getPatternModifiers } from './systems/BuildSystem';
 
 export class GameSimulation {
   readonly context: SimulationContext;
@@ -164,6 +166,8 @@ export class GameSimulation {
 
   snapshot(): RuntimeSnapshot {
     const state = this.context.state;
+    const needle = NEEDLES[state.player.needleId];
+    const modifiers = getPatternModifiers(state);
     return {
       phase: state.phase,
       stage: state.stage,
@@ -175,6 +179,8 @@ export class GameSimulation {
       shield: state.player.shield,
       flow: state.player.flow,
       tension: state.player.tension,
+      capturedShots: state.player.capturedShots,
+      projectileCapacity: needle.projectileCapacity + Math.round(modifiers.projectileCapacity),
       needleId: state.player.needleId,
       patternSlots: [...state.player.patternSlots],
       essences: [...state.player.essences],

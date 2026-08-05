@@ -1,13 +1,18 @@
 import Phaser from 'phaser';
 import type { EffectState, EnemyState, GameState } from '../../game/core/types';
 import { NEEDLES } from '../../game/content/needles';
-import { polygonArea } from '../../game/core/math';
+import { circleIntersectsSegment, polygonArea } from '../../game/core/math';
 import {
   buildLoopGeometry,
   isEnemyInsideLoop,
   MIN_LOOP_AREA
 } from '../../game/simulation/loopGeometry';
-import { getBackgroundTexture, getEnemyArt } from '../art/ArtManifest';
+import {
+  getBackgroundTexture,
+  getEnemyArt,
+  getNeedleTexture,
+  getPlayerAnchorTexture
+} from '../art/ArtManifest';
 
 const WHITE = 0xffffff;
 
@@ -19,6 +24,8 @@ export class WorldRenderer {
   private readonly world: Phaser.GameObjects.Graphics;
   private readonly glow: Phaser.GameObjects.Graphics;
   private readonly enemySprites = new Map<number, Phaser.GameObjects.Image>();
+  private readonly playerAnchorSprite: Phaser.GameObjects.Image | null;
+  private readonly playerNeedleSprite: Phaser.GameObjects.Image | null;
   private backgroundKey = '';
 
   constructor(scene: Phaser.Scene) {
@@ -29,6 +36,12 @@ export class WorldRenderer {
       .setDepth(-29);
     this.glow = scene.add.graphics().setDepth(-10);
     this.world = scene.add.graphics().setDepth(10);
+    this.playerAnchorSprite = scene.textures.exists(getPlayerAnchorTexture())
+      ? scene.add.image(0, 0, getPlayerAnchorTexture()).setDepth(5)
+      : null;
+    this.playerNeedleSprite = scene.textures.exists(getNeedleTexture('dawn'))
+      ? scene.add.image(0, 0, getNeedleTexture('dawn')).setDepth(6)
+      : null;
   }
 
   render(state: GameState): void {
@@ -36,6 +49,7 @@ export class WorldRenderer {
     this.world.clear();
     this.glow.clear();
     this.syncEnemySprites(state);
+    this.syncPlayerSprites(state);
     this.drawMotes(state);
     this.drawProjectiles(state);
     this.drawEnemies(state);
@@ -49,6 +63,8 @@ export class WorldRenderer {
     this.backgroundArt.destroy();
     this.world.destroy();
     this.glow.destroy();
+    this.playerAnchorSprite?.destroy();
+    this.playerNeedleSprite?.destroy();
     for (const sprite of this.enemySprites.values()) sprite.destroy();
     this.enemySprites.clear();
   }
@@ -115,6 +131,29 @@ export class WorldRenderer {
       if (living.has(uid)) continue;
       sprite.destroy();
       this.enemySprites.delete(uid);
+    }
+  }
+
+  private syncPlayerSprites(state: GameState): void {
+    const player = state.player;
+    const invulnerableFlash = player.invulnerable > 0 && Math.floor(state.elapsed * 12) % 2 === 0;
+    if (this.playerAnchorSprite) {
+      this.playerAnchorSprite
+        .setPosition(player.anchor.x, player.anchor.y)
+        .setDisplaySize(56, 56)
+        .setRotation(state.reducedMotion ? 0 : Math.sin(state.elapsed * 1.5) * 0.025)
+        .setAlpha(invulnerableFlash ? 0.46 : 1);
+    }
+    if (this.playerNeedleSprite) {
+      const texture = getNeedleTexture(player.needleId);
+      if (this.playerNeedleSprite.texture.key !== texture) this.playerNeedleSprite.setTexture(texture);
+      const angle = Math.atan2(player.needle.y - player.anchor.y, player.needle.x - player.anchor.x);
+      const breathing = state.reducedMotion ? 1 : 1 + Math.sin(state.elapsed * 5.2) * 0.025;
+      this.playerNeedleSprite
+        .setPosition(player.needle.x, player.needle.y)
+        .setDisplaySize(52 * breathing, 52 * breathing)
+        .setRotation(angle)
+        .setAlpha(invulnerableFlash ? 0.52 : 1);
     }
   }
 
@@ -226,7 +265,9 @@ export class WorldRenderer {
     this.glow.lineStyle(12, tensionColor, 0.11).strokePoints(points, false);
     this.world.lineStyle(state.highContrast ? 6 : 4, tensionColor, 0.96).strokePoints(points, false);
     const chordStart = geometry.sampled.at(-1) ?? player.needle;
-    this.world.lineStyle(2, WHITE, 0.34).lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
+    this.glow.lineStyle(10, 0xffd75a, 0.1).lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
+    this.world.lineStyle(state.highContrast ? 5 : 3, 0xffe786, 0.78)
+      .lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
     if (geometry.sampled.length > 4) {
       const polygon = geometry.polygon.map((point) => new Phaser.Math.Vector2(point.x, point.y));
       this.world.fillStyle(tensionColor, state.highContrast ? 0.24 : 0.18).fillPoints(polygon, true);
@@ -237,9 +278,14 @@ export class WorldRenderer {
   }
 
   private drawCapturePreview(state: GameState, geometry: ReturnType<typeof buildLoopGeometry>): void {
+    const chordStart = geometry.sampled.at(-1) ?? state.player.needle;
+    const chordEnd = state.player.anchor;
     for (const enemy of state.enemies) {
-      if (enemy.dead || !isEnemyInsideLoop(enemy, geometry)) continue;
-      if (enemy.type === 'bomb-bloom') {
+      if (enemy.dead) continue;
+      const inside = isEnemyInsideLoop(enemy, geometry);
+      const chordHit = circleIntersectsSegment(enemy, enemy.radius * 0.72 + 6, chordStart, chordEnd);
+      if (!inside && !(enemy.armor > 0 && chordHit)) continue;
+      if (enemy.type === 'bomb-bloom' && inside) {
         const warningShape = this.polygon(
           enemy.x,
           enemy.y,
@@ -264,10 +310,27 @@ export class WorldRenderer {
         continue;
       }
 
-      const highlight = enemy.armor > 0 ? 0xffd75a : 0xf2ffb8;
-      this.glow.lineStyle(12, highlight, 0.3).strokeCircle(enemy.x, enemy.y, enemy.radius + 7);
-      this.world.lineStyle(state.highContrast ? 6 : 4, highlight, 0.98).strokeCircle(enemy.x, enemy.y, enemy.radius + 6);
+      if (inside) {
+        const highlight = enemy.armor > 0 && !chordHit ? 0xffb552 : 0xf2ffb8;
+        this.glow.lineStyle(12, highlight, 0.3).strokeCircle(enemy.x, enemy.y, enemy.radius + 7);
+        this.world.lineStyle(state.highContrast ? 6 : 4, highlight, 0.98).strokeCircle(enemy.x, enemy.y, enemy.radius + 6);
+      }
+      if (enemy.armor > 0) this.drawArmorTarget(enemy, chordHit, state.elapsed);
     }
+  }
+
+  private drawArmorTarget(enemy: EnemyState, chordHit: boolean, elapsed: number): void {
+    const color = chordHit ? 0xa8f096 : 0xffd75a;
+    const pulse = 1 + Math.sin(elapsed * 6 + enemy.uid) * 0.12;
+    const radius = 9 * pulse;
+    this.glow.fillStyle(color, chordHit ? 0.28 : 0.16).fillCircle(enemy.x, enemy.y, radius * 2.2);
+    this.world.lineStyle(chordHit ? 4 : 3, color, 1).strokeCircle(enemy.x, enemy.y, radius);
+    this.world.lineStyle(2, color, 0.9);
+    this.world.lineBetween(enemy.x - radius - 5, enemy.y, enemy.x - radius + 1, enemy.y);
+    this.world.lineBetween(enemy.x + radius - 1, enemy.y, enemy.x + radius + 5, enemy.y);
+    this.world.lineBetween(enemy.x, enemy.y - radius - 5, enemy.x, enemy.y - radius + 1);
+    this.world.lineBetween(enemy.x, enemy.y + radius - 1, enemy.x, enemy.y + radius + 5);
+    if (chordHit) this.world.fillStyle(color, 1).fillCircle(enemy.x, enemy.y, 3.5);
   }
 
   private drawPlayer(state: GameState): void {
@@ -275,16 +338,29 @@ export class WorldRenderer {
     const needle = NEEDLES[player.needleId];
     const invulnerable = player.invulnerable > 0 && Math.floor(state.elapsed * 12) % 2 === 0;
     this.glow.fillStyle(needle.color, 0.12).fillCircle(player.anchor.x, player.anchor.y, 38);
-    this.world.lineStyle(3, invulnerable ? 0xff5f7f : needle.color, 0.96).strokeCircle(player.anchor.x, player.anchor.y, 14);
-    this.world.fillStyle(0x11162a, 1).fillCircle(player.anchor.x, player.anchor.y, 8);
-    this.world.fillStyle(needle.color, 1).fillCircle(player.anchor.x, player.anchor.y, 4);
-    const angle = Math.atan2(player.needle.y - player.anchor.y, player.needle.x - player.anchor.x);
-    const tip = { x: player.needle.x + Math.cos(angle) * 13, y: player.needle.y + Math.sin(angle) * 13 };
-    this.world.fillStyle(needle.color, 1).fillTriangle(
-      tip.x, tip.y,
-      player.needle.x + Math.cos(angle + 2.35) * 10, player.needle.y + Math.sin(angle + 2.35) * 10,
-      player.needle.x + Math.cos(angle - 2.35) * 10, player.needle.y + Math.sin(angle - 2.35) * 10
-    );
+    if (!this.playerAnchorSprite) {
+      this.world.lineStyle(3, invulnerable ? 0xff5f7f : needle.color, 0.96).strokeCircle(player.anchor.x, player.anchor.y, 14);
+      this.world.fillStyle(0x11162a, 1).fillCircle(player.anchor.x, player.anchor.y, 8);
+      this.world.fillStyle(needle.color, 1).fillCircle(player.anchor.x, player.anchor.y, 4);
+    }
+    if (!this.playerNeedleSprite) {
+      const angle = Math.atan2(player.needle.y - player.anchor.y, player.needle.x - player.anchor.x);
+      const tip = { x: player.needle.x + Math.cos(angle) * 13, y: player.needle.y + Math.sin(angle) * 13 };
+      this.world.fillStyle(needle.color, 1).fillTriangle(
+        tip.x, tip.y,
+        player.needle.x + Math.cos(angle + 2.35) * 10, player.needle.y + Math.sin(angle + 2.35) * 10,
+        player.needle.x + Math.cos(angle - 2.35) * 10, player.needle.y + Math.sin(angle - 2.35) * 10
+      );
+    }
+    for (let index = 0; index < player.capturedShots; index += 1) {
+      const angle = state.elapsed * 2.8 + (index / Math.max(1, player.capturedShots)) * Math.PI * 2;
+      const radius = 35 + (index % 2) * 5;
+      const x = player.anchor.x + Math.cos(angle) * radius;
+      const y = player.anchor.y + Math.sin(angle) * radius;
+      this.glow.fillStyle(0xb7a6ff, 0.28).fillCircle(x, y, 10);
+      this.world.fillStyle(0xede8ff, 1).fillCircle(x, y, 3.5);
+      this.world.lineStyle(2, 0xb7a6ff, 0.95).strokeCircle(x, y, 6);
+    }
     if (player.shield > 0) {
       this.world.lineStyle(2, 0x9fd8ff, 0.65).strokeCircle(player.anchor.x, player.anchor.y, 22 + Math.sin(state.elapsed * 5) * 2);
     }

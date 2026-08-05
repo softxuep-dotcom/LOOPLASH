@@ -11,7 +11,8 @@ thread, capture preview, projectiles, and enemies remain readable at mobile scal
 | Meadow | puff, needler, shellbud, bomb-bloom, meadow backdrop | hover, squash, velocity tilt |
 | Reef | skipper, splitter, mirrorling, bubble-ray, reef backdrop | hover, squash, direction flip |
 | Encounters | knot-knight, storm-spool, twin-maw, tanglejaw | slower breathing, direction flip where needed |
-| Code-native | needle, thread, motes, projectiles, capture preview, hit effects | Phaser graphics; preserves gameplay clarity |
+| Player | loomheart, dawn needle, twin needle, moon shuttle | aiming rotation, idle breathing, damage flash |
+| Code-native | thread, motes, projectiles, capture preview, hit effects | Phaser graphics; preserves gameplay clarity |
 
 All creature images use a 256×256 transparent frame with a centred subject. Runtime files
 are lossless WebP; backgrounds are compressed WebP. Collision radii remain simulation data
@@ -48,8 +49,7 @@ The current round creatures gain little from the extra runtime and authoring com
 
 ## Next production priorities
 
-1. Add a player avatar and dedicated needle silhouettes after the input feel is locked.
-2. Add a five-frame anticipation/burst atlas for bomb-bloom if capture-preview testing needs it.
-3. Add a phase-transition atlas or bone rig for tanglejaw only after boss timing is final.
-4. Add UI iconography from the same cream/gold/coral palette; keep text and HUD code-native.
-
+1. Add a five-frame anticipation/burst atlas for bomb-bloom if capture-preview testing needs it.
+2. Add a phase-transition atlas or bone rig for tanglejaw only after boss timing is final.
+3. Add UI iconography from the same cream/gold/coral palette; keep text and HUD code-native.
+4. Add restrained audio feedback for catch, armor break, and counterburst.

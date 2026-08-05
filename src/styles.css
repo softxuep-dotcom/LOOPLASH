@@ -53,6 +53,14 @@ button { color: inherit; }
 .meter b { display: block; height: 100%; background: var(--cyan); transition: width .1s linear; }
 .tension-meter b { background: linear-gradient(90deg, var(--cyan) 0 66%, var(--gold) 66% 85%, var(--pink) 85%); }
 .tension-meter em { position: absolute; left: 70%; top: 0; width: 18%; height: 100%; border-inline: 1px solid #fff; opacity: .8; }
+.parry-bank { padding: 9px 10px; border-left: 2px solid rgba(169,147,255,.35); background: linear-gradient(90deg, rgba(26,20,59,.78), transparent); }
+.parry-bank.armed { border-color: #b7a6ff; background: linear-gradient(90deg, rgba(62,42,113,.86), transparent); }
+.parry-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.parry-title span { font: 500 9px/1 ui-monospace, "Cascadia Mono", monospace; letter-spacing: .09em; color: #c9c2e5; }
+.parry-title strong { color: #fff; font: 700 11px/1 ui-monospace, "Cascadia Mono", monospace; }
+.shot-slots { display: flex; gap: 3px; margin-top: 6px; min-height: 12px; }
+.shot-slot { color: rgba(255,255,255,.2); font-size: 10px; line-height: 1; }.shot-slot.loaded { color: #b7a6ff; text-shadow: 0 0 10px rgba(169,147,255,.9); }
+.parry-bank small { display: block; margin-top: 5px; color: #9e99b4; font-size: 8px; line-height: 1.25; }.parry-bank.armed small { color: #eeeaff; }
 .essence-row { display: flex; gap: 6px; padding-left: 10px; }
 .essence { width: 15px; height: 15px; border-radius: 5px 2px 5px 2px; background: #ff8065; box-shadow: 0 0 10px currentColor; }.essence.empty { background: rgba(255,255,255,.08); box-shadow: none; }
 .family-tide { --family: #63d8ef; }.family-seed { --family: #98e587; }.family-prism { --family: #b49aff; }.family-ember { --family: #ff8065; }.family-wild { --family: #ffd75a; }
@@ -76,10 +84,18 @@ button { color: inherit; }
 .title-lockup p { margin: 15px auto 19px; max-width: 490px; color: #d0cde0; font-size: clamp(12px, 1.7vw, 16px); }
 .drag-hint { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px 8px 8px; border: 1px solid rgba(255,255,255,.18); border-radius: 24px; background: rgba(11,15,35,.7); font: 600 11px ui-monospace, "Cascadia Mono", monospace; letter-spacing: .06em; }
 .mouse-gesture { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: #171524; background: var(--gold); font-size: 20px; animation: trace 1.7s ease-in-out infinite; }
-.needle-picker { pointer-events: auto; width: min(760px, 94vw); display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.needle-card { min-height: 74px; display: grid; grid-template-columns: 48px 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 10px; padding: 10px; text-align: left; border: 1px solid var(--border); border-radius: 16px 6px; background: rgba(10,14,33,.82); backdrop-filter: blur(16px); cursor: pointer; transition: transform .15s ease, border .15s ease, background .15s ease; }
-.needle-card:hover { transform: translateY(-3px); background: rgba(22,27,54,.92); }.needle-card.selected { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(255,215,90,.22), 0 8px 28px rgba(0,0,0,.2); }
-.needle-glyph { grid-row: 1 / 3; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 13px 4px; color: var(--needle-color); background: color-mix(in srgb, var(--needle-color) 14%, transparent); font-size: 25px; }.needle-card b { font-size: 12px; }.needle-card small { align-self: start; color: #aaa8bb; font-size: 9px; line-height: 1.25; }
+.needle-picker-shell { pointer-events: auto; width: min(820px, 94vw); }
+.needle-picker-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 8px 7px; color: #cfccdd; font-size: 10px; }
+.needle-picker-heading b { color: #fff; font: 700 10px/1 ui-monospace, "Cascadia Mono", monospace; letter-spacing: .13em; }
+.needle-picker-heading span { color: var(--gold); }
+.needle-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.needle-card { position: relative; min-height: 108px; display: grid; grid-template-columns: 48px 1fr; grid-template-rows: auto auto auto; align-items: center; column-gap: 10px; padding: 10px; text-align: left; border: 1px solid var(--border); border-radius: 16px 6px; background: rgba(10,14,33,.86); backdrop-filter: blur(16px); cursor: pointer; transition: transform .15s ease, border .15s ease, background .15s ease; }
+.needle-card:hover { transform: translateY(-3px); background: rgba(22,27,54,.94); }.needle-card.selected { border-color: var(--gold); background: rgba(29,27,47,.94); box-shadow: inset 0 0 0 1px rgba(255,215,90,.22), 0 8px 28px rgba(0,0,0,.2); }
+.needle-glyph { grid-row: 1 / 4; display: grid; place-items: center; width: 44px; height: 48px; border-radius: 13px 4px; color: var(--needle-color); background: color-mix(in srgb, var(--needle-color) 14%, transparent); font-size: 25px; }
+.needle-name { display: flex; align-items: center; gap: 6px; }.needle-name b { font-size: 12px; }.needle-name em { padding: 2px 5px; border-radius: 8px; color: var(--needle-color); background: color-mix(in srgb, var(--needle-color) 12%, transparent); font: 600 7px/1 ui-monospace, "Cascadia Mono", monospace; font-style: normal; letter-spacing: .05em; }
+.needle-card small { align-self: start; color: #aaa8bb; font-size: 9px; line-height: 1.25; }
+.needle-stats { grid-column: 1 / -1; display: flex; gap: 5px; margin-top: 8px; }.needle-stats i { flex: 1; padding: 4px 3px; border: 1px solid rgba(255,255,255,.09); border-radius: 6px 2px; color: #d4d0e3; background: rgba(255,255,255,.035); text-align: center; font: 600 8px/1 ui-monospace, "Cascadia Mono", monospace; font-style: normal; white-space: nowrap; }
+.selected-mark { display: none; position: absolute; top: 7px; right: 8px; color: var(--gold); font-size: 11px; }.needle-card.selected .selected-mark { display: block; }
 
 .modal-overlay { pointer-events: auto; padding: 18px; background: rgba(3,6,18,.72); backdrop-filter: blur(8px); animation: fade-in .2s ease both; }
 .modal-card, .choice-shell { width: min(460px, 94vw); padding: 28px; text-align: center; border: 1px solid rgba(255,255,255,.18); border-radius: 28px 10px; background: linear-gradient(145deg, rgba(28,32,64,.97), rgba(10,14,34,.98)); box-shadow: 0 30px 80px rgba(0,0,0,.4); }
@@ -99,17 +115,17 @@ button { color: inherit; }
 
 @media (max-width: 760px) {
   .top-hud { grid-template-columns: 1fr auto; gap: 6px; }.identity { display: none; }.objective-block { justify-self: stretch; min-width: 0; }.stats { grid-column: 2; min-width: 0; gap: 7px; padding-left: 8px; }.score { display: none; }.hearts { font-size: 11px; }
-  .left-hud { top: 76px; width: 116px; }.meter { padding: 7px 8px; }.meter span { font-size: 8px; }
+  .left-hud { top: 76px; width: 116px; }.meter { padding: 7px 8px; }.meter span { font-size: 8px; }.parry-bank { padding: 7px 8px; }.parry-bank small { display: none; }
   .build-hud { top: auto; bottom: calc(var(--safe-bottom) + 8px); right: var(--safe-right); width: 168px; padding: 7px; }.build-title, .seam-list { display: none; }.stitch-ring { margin: 0; }
   .banner { top: 84px; max-width: 70vw; text-align: center; font-size: 9px; }
   .tutorial-tip { bottom: calc(var(--safe-bottom) + 58px); max-width: calc(100vw - 22px); white-space: nowrap; font-size: 10px; }
-  .tutorial-tip.ready-tip { bottom: calc(var(--safe-bottom) + 86px); }
-  .ready-overlay { padding-top: 18vh; }.title-lockup p { max-width: 310px; }.needle-picker { width: min(500px, 96vw); }.needle-card { grid-template-columns: 34px 1fr; min-height: 60px; padding: 7px; }.needle-glyph { width: 32px; height: 38px; font-size: 20px; }.needle-card small { display: none; }
+  .tutorial-tip.ready-tip { bottom: calc(var(--safe-bottom) + 172px); }
+  .ready-overlay { padding-top: 18vh; }.title-lockup p { max-width: 310px; }.needle-picker-shell { width: min(560px, 96vw); }.needle-picker-heading { margin-inline: 4px; }.needle-card { grid-template-columns: 34px 1fr; min-height: 88px; padding: 7px; }.needle-glyph { width: 32px; height: 38px; font-size: 20px; }.needle-card small { display: none; }.needle-stats { gap: 3px; margin-top: 5px; }.needle-stats i { padding: 3px 2px; font-size: 7px; }
   .choice-card { min-height: 170px; padding: 12px 9px; }.choice-glyph { width: 48px; height: 48px; font-size: 27px; }.choice-card b { font-size: 13px; }.choice-card small { font-size: 9px; }
 }
 
 @media (max-width: 480px), (max-height: 520px) {
-  .needle-picker { grid-template-columns: repeat(3, 1fr); }.needle-card { display: flex; flex-direction: column; text-align: center; gap: 4px; }.needle-card b { font-size: 9px; }.needle-glyph { flex: 0 0 30px; height: 30px; }
+  .needle-picker { grid-template-columns: repeat(3, 1fr); }.needle-picker-heading { align-items: flex-start; flex-direction: column; gap: 3px; }.needle-card { display: flex; min-height: 108px; flex-direction: column; text-align: center; gap: 4px; }.needle-name { flex-direction: column; gap: 3px; }.needle-name b { font-size: 9px; }.needle-glyph { flex: 0 0 30px; height: 30px; }.needle-stats { width: 100%; display: grid; grid-template-columns: 1fr; gap: 2px; margin-top: auto; }.needle-stats i { padding: 2px; }
   .choice-shell { padding: 18px 10px; }.choice-shell h2 { margin-bottom: 12px; }.choice-grid { gap: 5px; }.choice-card { min-height: 145px; padding: 9px 5px; }.choice-card small { display: none; }
   .title-lockup p { display: none; }.drag-hint { margin-top: 12px; }.build-hud { display: none; }
 }

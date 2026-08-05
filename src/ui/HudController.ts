@@ -51,6 +51,9 @@ export class HudController {
     }).join('');
     const rule = snapshot.worldRules.at(-1);
     const ruleDefinition = rule ? WORLD_RULE_BY_ID[rule] : undefined;
+    const capturedSlots = Array.from({ length: snapshot.projectileCapacity }, (_, index) =>
+      `<span class="shot-slot ${index < snapshot.capturedShots ? 'loaded' : ''}">${index < snapshot.capturedShots ? '◆' : '◇'}</span>`
+    ).join('');
 
     this.root.innerHTML = `
       <div class="top-hud">
@@ -77,6 +80,11 @@ export class HudController {
         </div>
         <div class="meter tension-meter"><span>${i18n.t('hud.tension')}</span><strong>${Math.round(snapshot.tension * 100)}%</strong>
           <i><b style="width:${Math.min(100, snapshot.tension * 100)}%"></b><em></em></i>
+        </div>
+        <div class="parry-bank ${snapshot.capturedShots > 0 ? 'armed' : ''}">
+          <div class="parry-title"><span>${i18n.t('hud.parry')}</span><strong>${snapshot.capturedShots}/${snapshot.projectileCapacity}</strong></div>
+          <div class="shot-slots" aria-label="${snapshot.capturedShots} / ${snapshot.projectileCapacity}">${capturedSlots}</div>
+          <small>${i18n.t(snapshot.capturedShots > 0 ? 'hud.parryReady' : 'hud.parryHint')}</small>
         </div>
         <div class="essence-row" aria-label="Recipe essences">${essence}${'<span class="essence empty"></span>'.repeat(Math.max(0, 3 - snapshot.essences.length))}</div>
       </div>
@@ -105,6 +113,7 @@ export class HudController {
 
   private renderOverlay(snapshot: RuntimeSnapshot): string {
     if (snapshot.phase === 'ready') {
+      const selectedNeedle = NEEDLE_LIST.find((needle) => needle.id === snapshot.needleId) ?? NEEDLE_LIST[0]!;
       return `<section class="overlay ready-overlay">
         <div class="title-lockup">
           <span class="sup-title">PLAYER FIT PROTOTYPE</span>
@@ -112,11 +121,24 @@ export class HudController {
           <p>${i18n.t('game.tagline')}</p>
           <div class="drag-hint"><span class="mouse-gesture">⌁</span>${i18n.t('ready.hint')}</div>
         </div>
-        <div class="needle-picker" aria-label="${i18n.t('ready.chooseNeedle')}">
-          ${NEEDLE_LIST.map((needle) => `<button class="needle-card ${snapshot.needleId === needle.id ? 'selected' : ''}" data-action="needle" data-id="${needle.id}">
-            <span class="needle-glyph" style="--needle-color:#${needle.color.toString(16).padStart(6, '0')}">${needle.glyph}</span>
-            <b>${i18n.t(needle.nameKey)}</b><small>${i18n.t(needle.descriptionKey)}</small>
-          </button>`).join('')}
+        <div class="needle-picker-shell">
+          <div class="needle-picker-heading">
+            <b>${i18n.t('ready.chooseNeedle')}</b>
+            <span>${i18n.t('ready.selected', { name: i18n.t(selectedNeedle.nameKey) })}</span>
+          </div>
+          <div class="needle-picker" aria-label="${i18n.t('ready.chooseNeedle')}">
+            ${NEEDLE_LIST.map((needle) => `<button class="needle-card ${snapshot.needleId === needle.id ? 'selected' : ''}" data-action="needle" data-id="${needle.id}">
+              <span class="needle-glyph" style="--needle-color:#${needle.color.toString(16).padStart(6, '0')}">${needle.glyph}</span>
+              <span class="needle-name"><b>${i18n.t(needle.nameKey)}</b><em>${i18n.t(`needle.${needle.id}.role`)}</em></span>
+              <small>${i18n.t(needle.descriptionKey)}</small>
+              <span class="needle-stats">
+                <i>${i18n.t('needle.statReach')} ${i18n.t(`needle.${needle.id}.reach`)}</i>
+                <i>${i18n.t('needle.statChord')} ×${needle.baseChordRepeats + 1}</i>
+                <i>${i18n.t('needle.statParry')} ${needle.projectileCapacity}</i>
+              </span>
+              <span class="selected-mark">✓</span>
+            </button>`).join('')}
+          </div>
         </div>
       </section>`;
     }

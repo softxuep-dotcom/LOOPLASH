@@ -265,6 +265,8 @@ export interface RuntimeSnapshot {
   shield: number;
   flow: number;
   tension: number;
+  capturedShots: number;
+  projectileCapacity: number;
   needleId: NeedleId;
   patternSlots: Array<string | null>;
   essences: Essence[];

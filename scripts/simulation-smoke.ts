@@ -31,6 +31,39 @@ function drawLoop(simulation: GameSimulation, points: Vec2[]): void {
   simulation.step(1 / 60, { ...idle, deployReleased: true, steer: points.at(-1)! });
 }
 
+function completeOnboardingMechanics(simulation: GameSimulation): void {
+  const state = simulation.context.state;
+  state.player.invulnerable = 999;
+  for (let frame = 0; frame < 600 && state.projectiles.length === 0; frame += 1) step(simulation, 1);
+  const shot = state.projectiles[0];
+  invariant(shot, 'parry lesson should produce a real projectile');
+
+  // Put the live shot on the first real trail segment, then draw that segment.
+  // This exercises LoopSystem interception rather than advancing tutorial state directly.
+  shot.x = (state.player.anchor.x + state.player.needle.x) * 0.5;
+  shot.y = (state.player.anchor.y + state.player.needle.y) * 0.5;
+  shot.vx = 0;
+  shot.vy = 0;
+  simulation.step(1 / 60, {
+    ...idle,
+    deployPressed: true,
+    deployHeld: true,
+    pointer: { ...state.player.needle }
+  });
+  invariant(state.player.capturedShots > 0, 'live thread should catch the tutorial projectile');
+  invariant(state.tutorialStep === 3, 'catching a projectile should advance to the armor lesson');
+  simulation.step(1 / 60, { ...idle, deployReleased: true });
+
+  for (let frame = 0; frame < 600 && !state.enemies.some((enemy) => enemy.type === 'shellbud'); frame += 1) step(simulation, 1);
+  const shellbud = state.enemies.find((enemy) => enemy.type === 'shellbud');
+  invariant(shellbud, 'armor lesson should produce a real shellbud');
+  shellbud.speed = 0;
+  shellbud.x = state.player.anchor.x + 10;
+  shellbud.y = state.player.anchor.y + 58;
+  drawLoop(simulation, objectiveLoop);
+  invariant(state.tutorialStep >= 4, 'a closing chord through the shellbud should complete onboarding');
+}
+
 const objectiveLoop: Vec2[] = [
   { x: -145, y: 45 }, { x: -185, y: -80 }, { x: -125, y: -175 },
   { x: 0, y: -220 }, { x: 125, y: -175 }, { x: 185, y: -80 },
@@ -163,6 +196,32 @@ invariant(SEAMS.length === 10, 'Player Fit needs 10 seams');
 invariant(new Set(STAGES.map((stage) => stage.biome)).size === 2, 'Player Fit needs 2 biomes');
 invariant(ENEMIES['bubble-ray'].armor > 0, 'Bubble Ray must supply knots in reef knotbreak stages');
 
+const needleSnapshotSimulation = new GameSimulation(1280, 720, 13);
+needleSnapshotSimulation.chooseNeedle('dawn');
+invariant(needleSnapshotSimulation.snapshot().projectileCapacity === 4, 'Dawn HUD should expose four caught-shot slots');
+needleSnapshotSimulation.chooseNeedle('twin');
+invariant(needleSnapshotSimulation.snapshot().projectileCapacity === 3, 'Twin HUD should expose three caught-shot slots');
+needleSnapshotSimulation.chooseNeedle('moon');
+invariant(needleSnapshotSimulation.snapshot().projectileCapacity === 5, 'Moon HUD should expose five caught-shot slots');
+
+const tutorialSpawnSimulation = new GameSimulation(1280, 720, 23);
+const tutorialState = tutorialSpawnSimulation.context.state;
+tutorialState.phase = 'playing';
+tutorialState.tutorialStep = 2;
+tutorialState.enemies = [];
+tutorialState.spawnTimer = 0;
+step(tutorialSpawnSimulation, 1);
+invariant(tutorialState.enemies.some((enemy) => enemy.type === 'needler'), 'parry lesson should introduce a shooter');
+invariant(
+  tutorialState.enemies.every((enemy) => enemy.type !== 'shellbud' && enemy.type !== 'bomb-bloom'),
+  'armor and bomb enemies must stay locked until their counterplay is taught'
+);
+tutorialState.tutorialStep = 3;
+tutorialState.enemies = [];
+tutorialState.spawnTimer = 0;
+step(tutorialSpawnSimulation, 1);
+invariant(tutorialState.enemies.some((enemy) => enemy.type === 'shellbud'), 'armor lesson should introduce a shellbud');
+
 const zeroSizeSimulation = new GameSimulation(0, 0, 17);
 zeroSizeSimulation.resize(0, 720);
 invariant(zeroSizeSimulation.context.state.width === 0, 'zero-width resize should leave layout untouched');
@@ -189,6 +248,7 @@ drawLoop(simulation, [
 ]);
 invariant(simulation.context.state.objective.current >= 3, 'first loop should capture the tutorial trio');
 invariant(simulation.context.state.player.score > 0, 'first loop should award score');
+completeOnboardingMechanics(simulation);
 
 completeStageChoice(simulation);
 invariant(simulation.context.state.stage === 1, 'first pattern should advance to meadow stage 2');
@@ -201,4 +261,4 @@ invariant(simulation.context.state.stage === 4, 'four completed objectives shoul
 step(simulation, 1);
 invariant(simulation.context.state.enemies.some((enemy) => enemy.behavior === 'boss'), 'boss stage should spawn Tanglejaw');
 
-console.info('Simulation smoke passed: supply margin, responsive layout, real objectives, build choices, biome rule, and boss entry.');
+console.info('Simulation smoke passed: onboarding order, needle HUD stats, supply margin, responsive layout, objectives, choices, and boss entry.');

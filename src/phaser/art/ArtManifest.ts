@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { BiomeId, EnemyState } from '../../game/core/types';
+import type { BiomeId, EnemyState, NeedleId } from '../../game/core/types';
 
 export interface EnemyArtDefinition {
   texture: string;
@@ -30,6 +30,15 @@ const BACKGROUND_ART: Record<BiomeId, { texture: string; path: string }> = {
   reef: { texture: 'environment-reef', path: 'assets/art/environment/reef.webp' }
 };
 
+const PLAYER_ART = {
+  anchor: { texture: 'player-loomheart', path: 'assets/art/player/loomheart.webp' },
+  needles: {
+    dawn: { texture: 'player-needle-dawn', path: 'assets/art/player/needle-dawn.webp' },
+    twin: { texture: 'player-needle-twin', path: 'assets/art/player/needle-twin.webp' },
+    moon: { texture: 'player-needle-moon', path: 'assets/art/player/needle-moon.webp' }
+  } satisfies Record<NeedleId, { texture: string; path: string }>
+};
+
 function creature(
   id: EnemyState['type'],
   diameterScale: number,
@@ -52,6 +61,10 @@ export function preloadArt(scene: Phaser.Scene): void {
   for (const definition of Object.values(BACKGROUND_ART)) {
     scene.load.image(definition.texture, definition.path);
   }
+  scene.load.image(PLAYER_ART.anchor.texture, PLAYER_ART.anchor.path);
+  for (const definition of Object.values(PLAYER_ART.needles)) {
+    scene.load.image(definition.texture, definition.path);
+  }
 }
 
 export function getEnemyArt(type: EnemyState['type']): EnemyArtDefinition {
@@ -60,4 +73,12 @@ export function getEnemyArt(type: EnemyState['type']): EnemyArtDefinition {
 
 export function getBackgroundTexture(biome: BiomeId): string {
   return BACKGROUND_ART[biome].texture;
+}
+
+export function getPlayerAnchorTexture(): string {
+  return PLAYER_ART.anchor.texture;
+}
+
+export function getNeedleTexture(needle: NeedleId): string {
+  return PLAYER_ART.needles[needle].texture;
 }
