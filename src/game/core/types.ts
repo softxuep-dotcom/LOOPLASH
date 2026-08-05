@@ -36,6 +36,7 @@ export interface NeedleDefinition {
   descriptionKey: string;
   glyph: string;
   color: number;
+  /** Maximum thread length as a fraction of the playfield's shorter side. */
   maxLength: number;
   needleSpeed: number;
   anchorPull: number;
@@ -179,6 +180,12 @@ export interface ObjectiveState {
 export interface PlayerState {
   anchor: Vec2;
   needle: Vec2;
+  /**
+   * Gap between the needle and the pointer captured at touch-down, decayed to
+   * zero over the first fraction of a second. Lets the gesture begin without
+   * the needle teleporting, then settle into direct one-to-one control.
+   */
+  grabOffset: Vec2;
   path: Vec2[];
   drawing: boolean;
   tension: number;
@@ -235,7 +242,15 @@ export interface InputFrame {
   deployPressed: boolean;
   deployHeld: boolean;
   deployReleased: boolean;
+  /** Relative steering vector. Keyboard control only; pointers use `pointer`. */
   steer: Vec2;
+  /**
+   * Absolute pointer position in world space while a pointer drives the
+   * gesture, otherwise null. Absolute control keeps the needle under the
+   * finger; a purely relative offset displaced it by (anchor - touch point)
+   * for the whole gesture.
+   */
+  pointer: Vec2 | null;
   pausePressed: boolean;
 }
 

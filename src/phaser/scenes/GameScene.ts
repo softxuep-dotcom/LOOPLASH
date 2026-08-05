@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { gameRuntime } from '../../game/runtime/GameRuntime';
+import { preloadArt } from '../art/ArtManifest';
 import { GameInputAdapter } from '../input/GameInputAdapter';
 import { WorldRenderer } from '../view/WorldRenderer';
 
@@ -12,6 +13,10 @@ export class GameScene extends Phaser.Scene {
 
   constructor() {
     super('game');
+  }
+
+  preload(): void {
+    preloadArt(this);
   }
 
   create(): void {

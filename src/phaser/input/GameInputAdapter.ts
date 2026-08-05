@@ -6,7 +6,6 @@ import { clampVector } from '../../game/core/math';
 export class GameInputAdapter {
   private physicalPointerDown = false;
   private simulatedPointerDown = false;
-  private pointerOrigin: Vec2 = { x: 0, y: 0 };
   private pointerPosition: Vec2 = { x: 0, y: 0 };
   private readonly pointerEvents: Array<{ type: 'down' | 'move' | 'up'; position: Vec2 }> = [];
   private keyboardSteer: Vec2 = { x: 42, y: 0 };
@@ -38,13 +37,17 @@ export class GameInputAdapter {
   poll(delta: number): InputFrame {
     let pointerPressed = false;
     let pointerReleased = false;
-    const pointerEvent = this.pointerEvents.shift();
-    if (pointerEvent) {
-      this.pointerPosition = pointerEvent.position;
-      if (pointerEvent.type === 'down') {
+    // Drain the entire queue every poll. A 120Hz touchscreen emits pointer
+    // events twice as fast as the 60Hz fixed step polls them, so consuming one
+    // per poll let the backlog — and the visible lag between finger and rope —
+    // grow for the whole gesture until the 64-entry cap started discarding the
+    // beginning of the stroke.
+    for (let event = this.pointerEvents.shift(); event; event = this.pointerEvents.shift()) {
+      this.pointerPosition = event.position;
+      if (event.type === 'down') {
         this.simulatedPointerDown = true;
         pointerPressed = true;
-      } else if (pointerEvent.type === 'up') {
+      } else if (event.type === 'up') {
         this.simulatedPointerDown = false;
         pointerReleased = true;
       }
@@ -71,12 +74,12 @@ export class GameInputAdapter {
       deployPressed: pointerPressed || keyboardPressed,
       deployHeld: this.simulatedPointerDown || keyboardHeld,
       deployReleased: pointerReleased || keyboardReleased,
-      steer: this.simulatedPointerDown
-        ? {
-            x: this.pointerPosition.x - this.pointerOrigin.x,
-            y: this.pointerPosition.y - this.pointerOrigin.y
-          }
-        : { ...this.keyboardSteer },
+      // Report where the pointer actually is. The simulation clamps it to the
+      // rope length, so the needle sits under the finger instead of mirroring
+      // it from the anchor. Included on the release frame too, so the snap uses
+      // the final position rather than the previous one.
+      pointer: this.simulatedPointerDown || pointerReleased ? { ...this.pointerPosition } : null,
+      steer: { ...this.keyboardSteer },
       pausePressed: Phaser.Input.Keyboard.JustDown(this.pauseKey)
     };
     return frame;
@@ -93,7 +96,6 @@ export class GameInputAdapter {
   private handlePointerDown(pointer: Phaser.Input.Pointer): void {
     if (!pointer.primaryDown) return;
     this.physicalPointerDown = true;
-    this.pointerOrigin = { x: pointer.x, y: pointer.y };
     this.pointerPosition = { x: pointer.x, y: pointer.y };
     this.pointerEvents.length = 0;
     this.pointerEvents.push({ type: 'down', position: { x: pointer.x, y: pointer.y } });

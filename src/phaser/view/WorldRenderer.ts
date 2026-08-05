@@ -1,26 +1,41 @@
 import Phaser from 'phaser';
 import type { EffectState, EnemyState, GameState } from '../../game/core/types';
 import { NEEDLES } from '../../game/content/needles';
+import { polygonArea } from '../../game/core/math';
+import {
+  buildLoopGeometry,
+  isEnemyInsideLoop,
+  MIN_LOOP_AREA
+} from '../../game/simulation/loopGeometry';
+import { getBackgroundTexture, getEnemyArt } from '../art/ArtManifest';
 
 const WHITE = 0xffffff;
 
-/** Vector-only renderer: simulation state goes in, Phaser draw calls come out. */
+/** Hybrid art renderer: simulation state goes in, Phaser display objects come out. */
 export class WorldRenderer {
+  private readonly scene: Phaser.Scene;
   private readonly background: Phaser.GameObjects.Graphics;
+  private readonly backgroundArt: Phaser.GameObjects.TileSprite;
   private readonly world: Phaser.GameObjects.Graphics;
   private readonly glow: Phaser.GameObjects.Graphics;
+  private readonly enemySprites = new Map<number, Phaser.GameObjects.Image>();
   private backgroundKey = '';
 
   constructor(scene: Phaser.Scene) {
-    this.background = scene.add.graphics();
-    this.world = scene.add.graphics();
-    this.glow = scene.add.graphics();
+    this.scene = scene;
+    this.background = scene.add.graphics().setDepth(-30);
+    this.backgroundArt = scene.add.tileSprite(0, 0, 1, 1, getBackgroundTexture('meadow'))
+      .setOrigin(0)
+      .setDepth(-29);
+    this.glow = scene.add.graphics().setDepth(-10);
+    this.world = scene.add.graphics().setDepth(10);
   }
 
   render(state: GameState): void {
     this.drawBackground(state);
     this.world.clear();
     this.glow.clear();
+    this.syncEnemySprites(state);
     this.drawMotes(state);
     this.drawProjectiles(state);
     this.drawEnemies(state);
@@ -31,31 +46,76 @@ export class WorldRenderer {
 
   destroy(): void {
     this.background.destroy();
+    this.backgroundArt.destroy();
     this.world.destroy();
     this.glow.destroy();
+    for (const sprite of this.enemySprites.values()) sprite.destroy();
+    this.enemySprites.clear();
   }
 
   private drawBackground(state: GameState): void {
-    const key = `${state.biome}:${state.width}:${state.height}:${state.highContrast}`;
-    if (key === this.backgroundKey) return;
-    this.backgroundKey = key;
+    const texture = getBackgroundTexture(state.biome);
+    const key = `${texture}:${state.width}:${state.height}:${state.highContrast}`;
     const meadow = state.biome === 'meadow';
     const base = state.highContrast ? 0x05060b : meadow ? 0x0b1730 : 0x071a2d;
-    const accent = meadow ? 0x2a3564 : 0x0d4661;
-    this.background.clear().fillStyle(base, 1).fillRect(0, 0, state.width, state.height);
-    this.background.fillStyle(accent, state.highContrast ? 0.16 : 0.28);
-    for (let row = 0; row < 8; row += 1) {
-      for (let col = 0; col < 12; col += 1) {
-        const x = ((col + (row % 2) * 0.5) / 12) * state.width;
-        const y = 54 + (row / 8) * state.height;
-        const radius = 1.5 + ((row * 7 + col * 3) % 4);
-        this.background.fillCircle(x, y, radius);
+    if (key !== this.backgroundKey) {
+      this.backgroundKey = key;
+      this.background.clear().fillStyle(base, 1).fillRect(0, 0, state.width, state.height);
+      this.backgroundArt
+        .setTexture(texture)
+        .setSize(state.width, state.height)
+        .setAlpha(state.highContrast ? 0.32 : 0.72);
+      const source = this.scene.textures.get(texture).getSourceImage() as HTMLImageElement;
+      const scale = state.height / Math.max(1, source.height);
+      this.backgroundArt.setTileScale(scale);
+    }
+    const drift = state.reducedMotion ? 0 : state.elapsed;
+    this.backgroundArt.setTilePosition(drift * 1.8, Math.sin(drift * 0.08) * 5);
+  }
+
+  private syncEnemySprites(state: GameState): void {
+    const living = new Set<number>();
+    for (const enemy of state.enemies) {
+      if (enemy.dead) continue;
+      const art = getEnemyArt(enemy.type);
+      if (!this.scene.textures.exists(art.texture)) continue;
+      living.add(enemy.uid);
+      let sprite = this.enemySprites.get(enemy.uid);
+      if (!sprite) {
+        sprite = this.scene.add.image(enemy.x, enemy.y, art.texture).setOrigin(0.5);
+        this.enemySprites.set(enemy.uid, sprite);
+      } else if (sprite.texture.key !== art.texture) {
+        sprite.setTexture(art.texture);
+      }
+
+      const motion = Math.hypot(enemy.vx, enemy.vy);
+      const bob = state.reducedMotion ? 0 : Math.sin(enemy.age * 4.4 + enemy.phase) * enemy.radius * 0.08;
+      const squash = state.reducedMotion ? 0 : Math.sin(enemy.age * 6.2 + enemy.uid) * 0.035;
+      const diameter = enemy.radius * art.diameterScale;
+      sprite
+        .setPosition(enemy.x, enemy.y + bob)
+        .setDisplaySize(diameter * (1 + squash), diameter * (1 - squash))
+        .setDepth(enemy.y / 100_000)
+        .setAlpha(enemy.dead ? 0 : 1)
+        .setFlipX(art.facesLeft === true && enemy.vx > 2);
+
+      const targetRotation = art.tiltWithVelocity && motion > 2
+        ? Math.atan2(enemy.vy, Math.abs(enemy.vx)) * 0.16
+        : (state.reducedMotion ? 0 : Math.sin(enemy.age * 2.6 + enemy.phase) * 0.035);
+      sprite.setRotation(targetRotation);
+
+      if ((enemy.flash ?? 0) > 0) {
+        sprite.setTint(WHITE).setTintMode(Phaser.TintModes.FILL);
+      } else {
+        sprite.clearTint();
       }
     }
-    this.background.lineStyle(1, accent, 0.22);
-    const spacing = Math.max(72, Math.min(state.width, state.height) / 7);
-    for (let x = 0; x < state.width + spacing; x += spacing) this.background.lineBetween(x, 54, x - spacing * 0.75, state.height);
-    for (let y = 54; y < state.height + spacing; y += spacing) this.background.lineBetween(0, y, state.width, y + spacing * 0.42);
+
+    for (const [uid, sprite] of this.enemySprites) {
+      if (living.has(uid)) continue;
+      sprite.destroy();
+      this.enemySprites.delete(uid);
+    }
   }
 
   private drawMotes(state: GameState): void {
@@ -84,9 +144,11 @@ export class WorldRenderer {
     for (const enemy of state.enemies) {
       const flash = (enemy.flash ?? 0) > 0;
       this.glow.fillStyle(flash ? WHITE : enemy.color, flash ? 0.25 : 0.1).fillCircle(enemy.x, enemy.y, enemy.radius * 1.75);
-      if (enemy.behavior === 'boss') this.drawBoss(enemy, state.elapsed);
-      else if (enemy.behavior.startsWith('elite')) this.drawElite(enemy, state.elapsed);
-      else this.drawCreature(enemy, state.elapsed);
+      if (!this.enemySprites.has(enemy.uid)) {
+        if (enemy.behavior === 'boss') this.drawBoss(enemy, state.elapsed);
+        else if (enemy.behavior.startsWith('elite')) this.drawElite(enemy, state.elapsed);
+        else this.drawCreature(enemy, state.elapsed);
+      }
       this.drawEnemyHealth(enemy);
     }
   }
@@ -158,14 +220,53 @@ export class WorldRenderer {
     const player = state.player;
     if (!player.drawing || player.path.length < 2) return;
     const needle = NEEDLES[player.needleId];
-    const points = player.path.map((point) => new Phaser.Math.Vector2(point.x, point.y));
+    const geometry = buildLoopGeometry(state);
+    const points = geometry.sampled.map((point) => new Phaser.Math.Vector2(point.x, point.y));
     const tensionColor = player.tension < 0.7 ? needle.color : player.tension < 0.9 ? 0xffd75a : 0xff5f7f;
     this.glow.lineStyle(12, tensionColor, 0.11).strokePoints(points, false);
     this.world.lineStyle(state.highContrast ? 6 : 4, tensionColor, 0.96).strokePoints(points, false);
-    this.world.lineStyle(2, WHITE, 0.34).lineBetween(player.path[0]!.x, player.path[0]!.y, player.needle.x, player.needle.y);
-    if (player.path.length > 4) {
-      const polygon = [...points, new Phaser.Math.Vector2(player.anchor.x, player.anchor.y)];
-      this.world.fillStyle(tensionColor, 0.055).fillPoints(polygon, true);
+    const chordStart = geometry.sampled.at(-1) ?? player.needle;
+    this.world.lineStyle(2, WHITE, 0.34).lineBetween(chordStart.x, chordStart.y, player.anchor.x, player.anchor.y);
+    if (geometry.sampled.length > 4) {
+      const polygon = geometry.polygon.map((point) => new Phaser.Math.Vector2(point.x, point.y));
+      this.world.fillStyle(tensionColor, state.highContrast ? 0.24 : 0.18).fillPoints(polygon, true);
+      if (polygonArea(geometry.polygon) >= MIN_LOOP_AREA && geometry.sampled.length >= 4) {
+        this.drawCapturePreview(state, geometry);
+      }
+    }
+  }
+
+  private drawCapturePreview(state: GameState, geometry: ReturnType<typeof buildLoopGeometry>): void {
+    for (const enemy of state.enemies) {
+      if (enemy.dead || !isEnemyInsideLoop(enemy, geometry)) continue;
+      if (enemy.type === 'bomb-bloom') {
+        const warningShape = this.polygon(
+          enemy.x,
+          enemy.y,
+          enemy.radius * 1.08,
+          8,
+          enemy.phase + state.elapsed * 0.25
+        );
+        this.glow.fillStyle(0xff426f, 0.3).fillCircle(enemy.x, enemy.y, enemy.radius * 1.8);
+        this.world.fillStyle(0x5b123f, 0.82).fillPoints(warningShape, true);
+        this.world.lineStyle(5, 0xffd75a, 0.98).strokePoints(warningShape, true);
+        this.world.lineStyle(3, 0xff7b9e, 0.95);
+        const span = enemy.radius * 0.72;
+        for (const offset of [-0.45, 0, 0.45]) {
+          const shift = enemy.radius * offset;
+          this.world.lineBetween(
+            enemy.x - span + shift,
+            enemy.y + span,
+            enemy.x + span + shift,
+            enemy.y - span
+          );
+        }
+        continue;
+      }
+
+      const highlight = enemy.armor > 0 ? 0xffd75a : 0xf2ffb8;
+      this.glow.lineStyle(12, highlight, 0.3).strokeCircle(enemy.x, enemy.y, enemy.radius + 7);
+      this.world.lineStyle(state.highContrast ? 6 : 4, highlight, 0.98).strokeCircle(enemy.x, enemy.y, enemy.radius + 6);
     }
   }
 

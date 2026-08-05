@@ -6,16 +6,24 @@ import {
   distance,
   lerp,
   pointInPolygon,
-  polygonArea,
-  resamplePath
+  polygonArea
 } from '../../core/math';
 import { NEEDLES } from '../../content/needles';
 import { getPatternModifiers, getWorldModifiers } from './BuildSystem';
 import { hurtPlayer, type EnemySystem } from './EnemySystem';
 import type { SimulationContext } from '../SimulationContext';
+import {
+  buildLoopGeometry,
+  isEnemyInsideLoop,
+  MAX_RAW_PATH_POINTS,
+  MIN_LOOP_AREA,
+  needleMaxLength,
+  needleSpeed,
+  PATH_SAMPLE_DISTANCE
+} from '../loopGeometry';
 
-const MIN_LOOP_AREA = 1200;
-const PATH_SAMPLE_DISTANCE = 11;
+/** Time constant for dissolving the touch-down grab offset. */
+const GRAB_DECAY_TIME = 0.06;
 
 export class LoopSystem {
   constructor(
@@ -36,11 +44,16 @@ export class LoopSystem {
       player.drawing = true;
       player.path = [{ ...player.anchor }];
       player.tension = 0;
+      // Absorb the gap between the resting needle and the touch point so the
+      // first frame does not teleport the needle. GRAB_DECAY_TIME dissolves it.
+      player.grabOffset = input.pointer
+        ? { x: player.needle.x - input.pointer.x, y: player.needle.y - input.pointer.y }
+        : { x: 0, y: 0 };
       state.tutorialStep = Math.max(state.tutorialStep, 1);
     }
 
     if (player.drawing && input.deployHeld) {
-      this.updateDrawing(delta, input.steer);
+      this.updateDrawing(delta, input);
     }
 
     if (player.drawing && input.deployReleased) {
@@ -59,16 +72,40 @@ export class LoopSystem {
     if (this.context.state.player.drawing) this.snap(true);
   }
 
-  private updateDrawing(delta: number, steer: Vec2): void {
+  /**
+   * Where the needle should sit relative to the anchor this frame.
+   *
+   * Pointers are absolute: the needle goes to the finger, clamped radially to
+   * the rope length so that reaching past full extension slides along the
+   * maximum-radius circle instead of going dead. `grabOffset` decays to zero
+   * over the first ~180ms so the gesture starts where the needle already was
+   * and settles into one-to-one control. Keyboard input stays relative.
+   */
+  private resolveOffset(delta: number, input: InputFrame, maxLength: number): Vec2 {
+    const player = this.context.state.player;
+    if (!input.pointer) return clampVector(input.steer, maxLength);
+    const decay = Math.exp(-delta / GRAB_DECAY_TIME);
+    player.grabOffset.x *= decay;
+    player.grabOffset.y *= decay;
+    if (Math.abs(player.grabOffset.x) < 0.5) player.grabOffset.x = 0;
+    if (Math.abs(player.grabOffset.y) < 0.5) player.grabOffset.y = 0;
+    return clampVector({
+      x: input.pointer.x + player.grabOffset.x - player.anchor.x,
+      y: input.pointer.y + player.grabOffset.y - player.anchor.y
+    }, maxLength);
+  }
+
+  private updateDrawing(delta: number, input: InputFrame): void {
     const state = this.context.state;
     const player = state.player;
     const needle = NEEDLES[player.needleId];
     const patterns = getPatternModifiers(state);
     const world = getWorldModifiers(state);
-    const maxLength = needle.maxLength;
-    const offset = clampVector(steer, maxLength);
+    const maxLength = needleMaxLength(state);
+    if (maxLength <= 0) return;
+    const offset = this.resolveOffset(delta, input, maxLength);
     const target = { x: player.anchor.x + offset.x, y: player.anchor.y + offset.y };
-    const alpha = clamp((needle.needleSpeed * delta) / Math.max(1, distance(player.needle, target)), 0, 1);
+    const alpha = clamp((needleSpeed(state) * delta) / Math.max(1, distance(player.needle, target)), 0, 1);
     player.needle.x = lerp(player.needle.x, target.x, alpha);
     player.needle.y = lerp(player.needle.y, target.y, alpha);
 
@@ -90,7 +127,10 @@ export class LoopSystem {
     const last = player.path[player.path.length - 1];
     if (!last || distance(last, player.needle) >= PATH_SAMPLE_DISTANCE) {
       player.path.push({ ...player.needle });
-      player.path = resamplePath(player.path, PATH_SAMPLE_DISTANCE, 48);
+      // Keep the raw trail. Decimation happens once, in buildLoopGeometry();
+      // re-decimating an already decimated path on every frame compounded its
+      // error and slowly straightened the drawn loop.
+      if (player.path.length > MAX_RAW_PATH_POINTS) player.path.shift();
       this.interceptProjectiles(last ?? player.anchor, player.needle);
     }
 
@@ -120,8 +160,8 @@ export class LoopSystem {
     const player = state.player;
     const needleDefinition = NEEDLES[player.needleId];
     player.drawing = false;
-    const sampled = resamplePath([...player.path, { ...player.needle }], PATH_SAMPLE_DISTANCE, 48);
-    const polygon = [...sampled, { ...player.anchor }];
+    const geometry = buildLoopGeometry(state);
+    const { sampled, polygon } = geometry;
     const area = polygonArea(polygon);
     const chordStart = sampled[sampled.length - 1] ?? player.needle;
     const chordEnd = { ...player.anchor };
@@ -147,10 +187,9 @@ export class LoopSystem {
 
     const modifiers = getPatternModifiers(state);
     const world = getWorldModifiers(state);
-    const tolerance = 9 * needleDefinition.captureTolerance * modifiers.captureTolerance;
     const inside = new Set<number>();
     for (const enemy of state.enemies) {
-      if (pointInPolygon(enemy, polygon, enemy.radius * 0.38 + tolerance)) inside.add(enemy.uid);
+      if (isEnemyInsideLoop(enemy, geometry)) inside.add(enemy.uid);
     }
 
     let captures = 0;
@@ -214,7 +253,7 @@ export class LoopSystem {
     }
 
     for (const mote of state.motes) {
-      if (!pointInPolygon(mote, polygon, mote.radius * 0.5 + tolerance)) continue;
+      if (!pointInPolygon(mote, polygon, mote.radius * 0.5 + geometry.captureTolerance)) continue;
       mote.radius = 0;
       state.objective.current += state.objective.id === 'rescue' ? 1 : 0;
       captures += 1;

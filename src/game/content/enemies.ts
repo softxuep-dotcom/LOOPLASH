@@ -31,7 +31,7 @@ export const ENEMIES: Record<EnemyId, EnemyDefinition> = {
   },
   'bubble-ray': {
     id: 'bubble-ray', nameKey: 'enemy.bubbleRay', biome: 'reef', color: 0x57a5d8, accent: 0xbfeaff,
-    radius: 25, speed: 36, score: 180, essence: 'tide', health: 2, armor: 0, behavior: 'orbit-shoot'
+    radius: 25, speed: 36, score: 180, essence: 'tide', health: 2, armor: 2, behavior: 'orbit-shoot'
   }
 };
 

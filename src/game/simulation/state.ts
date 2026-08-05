@@ -17,6 +17,7 @@ export function createInitialState(width: number, height: number, seed: number, 
     player: {
       anchor: { ...center },
       needle: { x: center.x + 42, y: center.y },
+      grabOffset: { x: 0, y: 0 },
       path: [],
       drawing: false,
       tension: 0,

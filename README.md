@@ -30,7 +30,10 @@ npm run build
 - Desktop, pointer, keyboard, and responsive touch layouts.
 - English and Simplified Chinese localization architecture, reduced-motion and high-contrast settings.
 
-All current art is lightweight Phaser vector drawing. It is deliberately replaceable by atlases without changing simulation rules.
+The first production-art pass is integrated: 12 painted creature sprites, two biome backdrops,
+and Phaser-driven secondary animation. Needles, thread, projectiles, capture previews, and hit
+effects remain code-native for gameplay clarity. See `ART_DIRECTION.md` for the asset plan and
+reproducible pipeline.
 
 ## Architecture
 
@@ -45,7 +48,8 @@ src/
   phaser/
     input/         Pointer and keyboard normalization
     scenes/        Thin fixed-step Phaser scene
-    view/          State-driven vector renderer
+    art/           Runtime art manifest and preload mapping
+    view/          State-driven hybrid sprite/vector renderer
   ui/              DOM HUD, choices and accessibility controls
   localization/    Message catalog and locale selection
 ```

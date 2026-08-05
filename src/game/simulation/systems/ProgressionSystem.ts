@@ -1,4 +1,4 @@
-import { STAGES } from '../../content/encounters';
+import { requiredStageSupply, STAGES } from '../../content/encounters';
 import { PATTERNS } from '../../content/patterns';
 import { WORLD_RULES } from '../../content/worldRules';
 import { getWorldModifiers } from './BuildSystem';
@@ -78,15 +78,21 @@ export class ProgressionSystem {
     const world = getWorldModifiers(state);
     state.spawnTimer -= delta;
     const aliveLimit = Math.min(18, Math.round(10 * world.spawnCount));
-    if (state.spawnTimer > 0 || state.spawnedInStage >= state.stageQuota || state.enemies.length >= aliveLimit) return;
+    if (state.objective.current >= state.objective.target || state.spawnTimer > 0 || state.enemies.length >= aliveLimit) return;
 
-    if (stage.objective === 'rescue' && state.motes.length + state.objective.current < state.objective.target + 1
-      && state.spawnedInStage % 3 === 0) {
+    const replenishing = state.spawnedInStage >= state.stageQuota;
+    const requiredSupply = requiredStageSupply(stage.target);
+
+    if (stage.objective === 'rescue' && state.motes.length + state.objective.current < requiredSupply
+      && (replenishing || state.spawnedInStage % 3 === 0)) {
       this.enemies.spawnMote();
     }
 
     let enemyType = this.context.random.pick(stage.enemyPool);
-    if (stage.objective === 'knotbreak' && state.spawnedInStage % 3 === 0) {
+    if (stage.objective === 'harvest' && replenishing) {
+      enemyType = stage.enemyPool.find((type) => type !== 'bomb-bloom') ?? enemyType;
+    }
+    if (stage.objective === 'knotbreak' && (replenishing || state.spawnedInStage % 3 === 0)) {
       enemyType = stage.biome === 'meadow' ? 'shellbud' : 'bubble-ray';
     }
     this.enemies.spawnNormal(enemyType);

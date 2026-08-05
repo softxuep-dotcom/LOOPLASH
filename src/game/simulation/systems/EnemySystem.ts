@@ -53,11 +53,14 @@ export class EnemySystem {
       right.linkedUid = left.uid;
       left.armor = Math.max(0, left.armor + world.armorDelta);
       right.armor = Math.max(0, right.armor + world.armorDelta);
+      left.maxArmor = left.armor;
+      right.maxArmor = right.armor;
       this.context.state.enemies.push(left, right);
       return [left, right];
     }
     const elite = this.createElite(definition, this.edgeSpawnPoint());
     elite.armor = Math.max(0, elite.armor + world.armorDelta);
+    elite.maxArmor = elite.armor;
     this.context.state.enemies.push(elite);
     return [elite];
   }
@@ -76,8 +79,8 @@ export class EnemySystem {
       accent: 0xffd75a,
       health: 3,
       maxHealth: 3,
-      armor: 4,
-      maxArmor: 4,
+      armor: 5,
+      maxArmor: 5,
       speed: 38,
       score: 5000,
       essence: 'ember',

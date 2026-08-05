@@ -11,6 +11,12 @@ export interface StageDefinition {
   bannerKey: string;
 }
 
+export const STAGE_SUPPLY_MARGIN = 1.4;
+
+export function requiredStageSupply(target: number): number {
+  return Math.ceil(target * STAGE_SUPPLY_MARGIN);
+}
+
 export const STAGES: StageDefinition[] = [
   {
     biome: 'meadow', objective: 'harvest', target: 12, quota: 15,

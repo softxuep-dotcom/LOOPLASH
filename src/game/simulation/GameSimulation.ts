@@ -48,26 +48,77 @@ export class GameSimulation {
   }
 
   resize(width: number, height: number): void {
+    if (width <= 0 || height <= 0) return;
     const state = this.context.state;
-    const oldWidth = Math.max(1, state.width);
-    const oldHeight = Math.max(1, state.height);
-    const scaleX = width / oldWidth;
-    const scaleY = height / oldHeight;
+    const oldWidth = state.width;
+    const oldHeight = state.height;
+
+    if (oldWidth <= 0 || oldHeight <= 0) {
+      state.player.drawing = false;
+      state.player.path = [];
+      this.layoutFromUninitializedSize(width, height);
+      return;
+    }
+
+    this.loop.forceSafeRelease();
+
+    const layoutPoint = (point: { x: number; y: number }): void => {
+      const relativeX = point.x / oldWidth;
+      const relativeY = point.y / oldHeight;
+      point.x = relativeX * width;
+      point.y = relativeY * height;
+    };
+
+    layoutPoint(state.player.anchor);
+    layoutPoint(state.player.needle);
+    for (const point of state.player.path) layoutPoint(point);
+    for (const enemy of state.enemies) layoutPoint(enemy);
+    for (const projectile of state.projectiles) layoutPoint(projectile);
+    for (const mote of state.motes) layoutPoint(mote);
+    for (const effect of state.effects) {
+      layoutPoint(effect);
+      if (effect.x2 !== undefined && effect.y2 !== undefined) {
+        const endpoint = { x: effect.x2, y: effect.y2 };
+        layoutPoint(endpoint);
+        effect.x2 = endpoint.x;
+        effect.y2 = endpoint.y;
+      }
+    }
     state.width = width;
     state.height = height;
-    state.player.anchor.x *= scaleX;
-    state.player.anchor.y *= scaleY;
-    state.player.needle.x *= scaleX;
-    state.player.needle.y *= scaleY;
-    for (const enemy of state.enemies) {
-      enemy.x *= scaleX;
-      enemy.y *= scaleY;
+  }
+
+  private layoutFromUninitializedSize(width: number, height: number): void {
+    const state = this.context.state;
+    const previousAnchor = { ...state.player.anchor };
+    const nextAnchor = { x: width * 0.5, y: height * 0.56 };
+    const logicalSize = 720;
+    const shortSide = Math.min(width, height);
+    const layoutAroundAnchor = (point: { x: number; y: number }): void => {
+      const relativeX = (point.x - previousAnchor.x) / logicalSize;
+      const relativeY = (point.y - previousAnchor.y) / logicalSize;
+      point.x = nextAnchor.x + relativeX * shortSide;
+      point.y = nextAnchor.y + relativeY * shortSide;
+    };
+
+    layoutAroundAnchor(state.player.needle);
+    for (const point of state.player.path) layoutAroundAnchor(point);
+    for (const enemy of state.enemies) layoutAroundAnchor(enemy);
+    for (const projectile of state.projectiles) layoutAroundAnchor(projectile);
+    for (const mote of state.motes) layoutAroundAnchor(mote);
+    for (const effect of state.effects) {
+      layoutAroundAnchor(effect);
+      if (effect.x2 !== undefined && effect.y2 !== undefined) {
+        const endpoint = { x: effect.x2, y: effect.y2 };
+        layoutAroundAnchor(endpoint);
+        effect.x2 = endpoint.x;
+        effect.y2 = endpoint.y;
+      }
     }
-    for (const projectile of state.projectiles) {
-      projectile.x *= scaleX;
-      projectile.y *= scaleY;
-    }
-    this.loop.forceSafeRelease();
+    state.player.anchor.x = nextAnchor.x;
+    state.player.anchor.y = nextAnchor.y;
+    state.width = width;
+    state.height = height;
   }
 
   chooseNeedle(needleId: NeedleId): void {
